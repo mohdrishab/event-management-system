@@ -1,11 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 
 export const generateLeaveReason = async (eventName: string, startDate: string, endDate: string, studentName: string): Promise<string> => {
-  if (!process.env.API_KEY) {
-    console.warn("API Key not found");
-    return "I would like to attend this event to enhance my skills.";
-  }
-
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
