@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { Login } from './pages/Login';
 import { StudentDashboard } from './pages/StudentDashboard';
 import { TeacherDashboard } from './pages/TeacherDashboard';
 import { User } from './types';
+import { storageService } from './services/storageService';
 import { isSupabaseConfigured } from './services/supabaseClient';
 import { Database, AlertTriangle } from 'lucide-react';
 
@@ -13,22 +15,26 @@ function App() {
 
   // Check session and configuration on mount
   useEffect(() => {
-    // 1. Check if Supabase keys are set
     if (!isSupabaseConfigured()) {
       setIsConfigured(false);
       setIsLoading(false);
       return;
     }
 
-    // 2. Check for existing session
-    const checkSession = async () => {
-      const session = localStorage.getItem('unievent_session');
-      if (session) {
-        setUser(JSON.parse(session));
+    const startupCheck = async () => {
+      try {
+        // Check for existing session
+        const session = localStorage.getItem('unievent_session');
+        if (session) {
+          setUser(JSON.parse(session));
+        }
+      } catch (err) {
+        console.error("Startup check failed", err);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
-    checkSession();
+    startupCheck();
   }, []);
 
   const handleLogin = (loggedInUser: User) => {
@@ -82,7 +88,7 @@ function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 flex-col gap-4">
         <div className="w-10 h-10 border-4 border-orange-200 border-t-orange-600 rounded-full animate-spin"></div>
-        <div className="text-gray-400 font-medium">Loading UniEvent...</div>
+        <div className="text-gray-400 font-medium font-sans">Loading UniEvent...</div>
       </div>
     );
   }

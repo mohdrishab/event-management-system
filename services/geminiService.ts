@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 export const generateLeaveReason = async (eventName: string, startDate: string, endDate: string, studentName: string): Promise<string> => {
@@ -14,7 +15,7 @@ export const generateLeaveReason = async (eventName: string, startDate: string, 
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
     });
 

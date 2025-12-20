@@ -1,12 +1,18 @@
+
 import { LeaveApplication, User } from '../types';
 import { supabase } from './supabaseClient';
 import { MOCK_STUDENTS, MOCK_TEACHER, MOCK_HOD, MOCK_JUNIOR_TEACHER } from '../constants';
 
 export const storageService = {
   getUsers: async (): Promise<User[]> => {
-    const { data, error } = await supabase.from('users').select('*');
-    if (error) throw error;
-    return data as User[];
+    try {
+      const { data, error } = await supabase.from('users').select('*');
+      if (error) throw error;
+      return (data as User[]) || [];
+    } catch (error) {
+      console.warn("Supabase getUsers error:", error);
+      return [];
+    }
   },
 
   getFaculty: async (): Promise<User[]> => {
@@ -18,67 +24,92 @@ export const storageService = {
     return data as User[];
   },
 
-  login: async (identifier: string, password: string): Promise<User | null> => {
+  login: async (identifier: string, password: string, targetRole: 'STUDENT' | 'FACULTY'): Promise<User | null> => {
     const searchId = identifier.trim();
-    
-    // 1. Try finding user in Supabase (Case-Insensitive for Name/USN)
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .or(`name.ilike.${searchId},usn.ilike.${searchId}`);
+    if (!searchId) return null;
 
-    if (!error && data && data.length > 0) {
-        // Verify password (Case-Sensitive)
-        const validUser = data.find(u => u.password === password);
-        if (validUser) return validUser as User;
+    try {
+        // 1. Try finding user in Supabase with Role Filter
+        let query = supabase.from('users').select('*');
+        
+        if (targetRole === 'STUDENT') {
+            query = query.eq('role', 'STUDENT');
+        } else {
+            query = query.in('role', ['TEACHER', 'HOD']);
+        }
+
+        // Use a safe OR filter
+        const { data, error } = await query.or(`name.ilike.%${searchId}%,usn.ilike.%${searchId}%`);
+
+        if (!error && data && data.length > 0) {
+            // Verify password (Case-Sensitive)
+            const validUser = data.find(u => u.password === password);
+            if (validUser) return validUser as User;
+        }
+    } catch (e) {
+        console.error("Supabase login search failed:", e);
     }
 
-    // 2. FALLBACK: Check Constants (Auto-Seed Feature)
-    
-    // Check HOD
-    if ((MOCK_HOD.name.toLowerCase() === searchId.toLowerCase() || 'dr. strange' === searchId.toLowerCase()) && MOCK_HOD.password === password) {
-        return await storageService.autoSeedUser(MOCK_HOD);
-    }
+    // 2. FALLBACK: Check Constants / Auto-Seed if not in DB yet
+    const lowerSearch = searchId.toLowerCase();
 
-    // Check Senior Teacher
-    if ((MOCK_TEACHER.name.toLowerCase() === searchId.toLowerCase() || 't1' === searchId) && MOCK_TEACHER.password === password) {
-         return await storageService.autoSeedUser(MOCK_TEACHER);
-    }
-
-    // Check Junior Teacher
-    if ((MOCK_JUNIOR_TEACHER.name.toLowerCase() === searchId.toLowerCase()) && MOCK_JUNIOR_TEACHER.password === password) {
-         return await storageService.autoSeedUser(MOCK_JUNIOR_TEACHER);
-    }
-
-    // Check Students
-    const mockStudent = MOCK_STUDENTS.find(s => 
-        (s.usn?.toLowerCase() === searchId.toLowerCase() || s.name.toLowerCase() === searchId.toLowerCase()) && 
-        s.password === password
-    );
-
-    if (mockStudent) {
-        return await storageService.autoSeedUser(mockStudent);
+    if (targetRole === 'FACULTY') {
+        // Check HOD
+        if ((MOCK_HOD.name.toLowerCase() === lowerSearch || lowerSearch === 'hod') && MOCK_HOD.password === password) {
+            return await storageService.autoSeedUser(MOCK_HOD);
+        }
+        // Check Senior Teacher
+        if ((MOCK_TEACHER.name.toLowerCase() === lowerSearch || lowerSearch === 'teacher') && MOCK_TEACHER.password === password) {
+             return await storageService.autoSeedUser(MOCK_TEACHER);
+        }
+        // Check Junior Teacher
+        if (MOCK_JUNIOR_TEACHER.name.toLowerCase() === lowerSearch && MOCK_JUNIOR_TEACHER.password === password) {
+             return await storageService.autoSeedUser(MOCK_JUNIOR_TEACHER);
+        }
+    } else {
+        // Check Students
+        const mockStudent = MOCK_STUDENTS.find(s => 
+            (s.usn?.toLowerCase() === lowerSearch || s.name.toLowerCase() === lowerSearch) && 
+            s.password === password
+        );
+        if (mockStudent) {
+            return await storageService.autoSeedUser(mockStudent);
+        }
     }
     
     return null;
   },
 
   autoSeedUser: async (mockUser: User): Promise<User> => {
-      console.log(`Auto-seeding ${mockUser.role} ${mockUser.name}...`);
+      // Check if already exists by USN or Name+Role
+      let query = supabase.from('users').select('*').eq('role', mockUser.role);
+      if (mockUser.usn) {
+          query = query.eq('usn', mockUser.usn);
+      } else {
+          query = query.eq('name', mockUser.name);
+      }
       
-      // Determine permission: Use explicit value if present, otherwise default to false for Teachers
+      const { data: existing } = await query.maybeSingle();
+      if (existing) return existing as User;
+
+      // Ensure canApprove is set correctly for teachers
       let canApprove = mockUser.canApprove;
-      if (canApprove === undefined && mockUser.role === 'TEACHER') {
-          canApprove = false;
+      if (canApprove === undefined) {
+          canApprove = mockUser.role === 'HOD';
       }
 
-      const { data: newUser } = await supabase.from('users').insert([{
+      const { data: newUser, error } = await supabase.from('users').insert([{
              name: mockUser.name,
              usn: mockUser.usn,
              role: mockUser.role,
              password: mockUser.password,
              canApprove: canApprove
         }]).select().single();
+
+      if (error) {
+          console.error("Auto-seed insertion failed:", error);
+          throw error;
+      }
       return newUser as User;
   },
 
@@ -86,11 +117,12 @@ export const storageService = {
     const { data: existing } = await supabase
         .from('users')
         .select('id')
-        .ilike('usn', usn)
+        .eq('role', 'STUDENT')
+        .eq('usn', usn)
         .maybeSingle();
 
     if (existing) {
-        throw new Error("Student with this USN already exists.");
+        throw new Error("A student with this USN is already registered.");
     }
 
     const newUser = {
@@ -116,7 +148,6 @@ export const storageService = {
       .from('users')
       .update({ profilePic: updatedUser.profilePic })
       .eq('id', updatedUser.id);
-
     if (error) throw error;
   },
 
@@ -132,9 +163,8 @@ export const storageService = {
     const { data, error } = await supabase
       .from('applications')
       .select('*');
-      
     if (error) throw error;
-    return data as LeaveApplication[];
+    return (data as LeaveApplication[]) || [];
   },
 
   saveApplication: async (app: LeaveApplication): Promise<void> => {
@@ -142,7 +172,6 @@ export const storageService = {
     const { error } = await supabase
       .from('applications')
       .insert([appData]); 
-
     if (error) throw error;
   },
 
@@ -154,7 +183,6 @@ export const storageService = {
         reviewedAt: status === 'PENDING' ? null : new Date().toISOString()
       })
       .eq('id', id);
-
     if (error) throw error;
   },
 
@@ -175,38 +203,34 @@ export const storageService = {
   },
 
   seedStudents: async (): Promise<string> => {
-    // 1. Seed HOD (Dr. Strange) - CAN APPROVE
+    // Seed core faculty first
     await storageService.upsertUser(MOCK_HOD);
-
-    // 2. Seed Senior Teacher (Prof. Albus) - CAN APPROVE
     await storageService.upsertUser(MOCK_TEACHER);
-
-    // 3. Seed Junior Teacher (Prof. Snape) - CANNOT APPROVE (View Only)
     await storageService.upsertUser(MOCK_JUNIOR_TEACHER);
 
-    // 4. Seed Students
-    let count = 0;
-    for (const student of MOCK_STUDENTS) {
-        await storageService.upsertUser(student);
-        count++;
+    // Seed Students in batches
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < MOCK_STUDENTS.length; i += BATCH_SIZE) {
+        const batch = MOCK_STUDENTS.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(s => storageService.upsertUser(s)));
     }
     
-    return `Initialized: Dr. Strange (HOD), Prof. Albus, Prof. Snape, and ${count} Students.`;
+    return `System successfully initialized with all demo records.`;
   },
 
   upsertUser: async (user: Partial<User>) => {
-      // Helper to insert or update based on Name/USN
-      let query = supabase.from('users').select('id');
-      
-      if (user.usn) query = query.ilike('usn', user.usn);
-      else if (user.name) query = query.ilike('name', user.name);
+      let query = supabase.from('users').select('id').eq('role', user.role);
+      if (user.usn) {
+          query = query.eq('usn', user.usn);
+      } else if (user.name) {
+          query = query.eq('name', user.name);
+      }
       
       const { data: existing } = await query.maybeSingle();
 
       if (existing) {
           await supabase.from('users').update({ 
               password: user.password,
-              role: user.role,
               canApprove: user.canApprove 
           }).eq('id', existing.id);
       } else {
