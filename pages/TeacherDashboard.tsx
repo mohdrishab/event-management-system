@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, LeaveApplication } from '../types';
 import { storageService } from '../services/storageService';
 import { Button } from '../components/Button';
-import { LogOut, List, Layers, History, Check, X, Undo2, Heart, Calendar, GraduationCap, ArrowRight, Image as ImageIcon, Search, Clock, Loader2, Star, Users, UserCog, ChevronDown, AlertCircle } from 'lucide-react';
+import { LogOut, List, Layers, History, Check, X, Undo2, Heart, Calendar, GraduationCap, ArrowRight, Image as ImageIcon, Search, Clock, Loader2, Star, Users, UserCog, ChevronDown, RefreshCcw } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface TeacherDashboardProps {
@@ -18,32 +19,25 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
   const [pendingApps, setPendingApps] = useState<LeaveApplication[]>([]);
   const [faculty, setFaculty] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
-  // History Search State
   const [historySearchTerm, setHistorySearchTerm] = useState('');
-  
-  // Swipe Logic State
   const [swipeIndex, setSwipeIndex] = useState(0);
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | null>(null);
   
-  // Gesture State
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<{ x: number, y: number } | null>(null);
 
-  // Global approval right (HOD or Senior Teacher)
   const canApproveGlobal = user.role === 'HOD' || user.canApprove === true;
   const isHOD = user.role === 'HOD';
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    setIsLoading(true);
+  const loadData = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoading(true);
+    else setIsRefreshing(true);
+    
     try {
         const all = await storageService.getApplications();
-        // Sort: Priority First, then Date (Newest)
         const sorted = all.sort((a, b) => {
             if (a.isPriority && !b.isPriority) return -1;
             if (!a.isPriority && b.isPriority) return 1;
@@ -51,10 +45,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
         });
         
         setApplications(sorted);
-        setPendingApps(sorted.filter(a => a.status === 'PENDING'));
-        setSwipeIndex(0);
+        // Resilient filtering (case-insensitive)
+        const pending = sorted.filter(a => a.status?.toUpperCase() === 'PENDING');
+        setPendingApps(pending);
+        
+        // Ensure swipe index doesn't go out of bounds after refresh
+        if (swipeIndex >= pending.length) setSwipeIndex(0);
 
-        // Load Faculty if HOD or for assignment dropdowns
         const staff = await storageService.getFaculty();
         setFaculty(staff);
 
@@ -62,40 +59,43 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
         console.error("Failed to load data", error);
     } finally {
         setIsLoading(false);
+        setIsRefreshing(false);
     }
-  };
+  }, [swipeIndex]);
+
+  useEffect(() => {
+    loadData();
+    
+    // Set up auto-refresh every 10 seconds to catch new student submissions
+    const intervalId = setInterval(() => {
+        loadData(true);
+    }, 10000);
+
+    return () => clearInterval(intervalId);
+  }, [loadData]);
 
   const handleDecision = async (appId: string, status: 'APPROVED' | 'REJECTED') => {
     const app = applications.find(a => a.id === appId);
     const isAssignedToMe = app?.assignedTeacherId === user.id;
 
-    // Strict Permission Check: Must be Global Approver OR Assigned Teacher
     if (!canApproveGlobal && !isAssignedToMe) {
-        alert("You do not have permission to approve this application.");
+        alert("Permission denied.");
         return;
     }
 
-    await storageService.updateApplicationStatus(appId, status);
-    
-    // Optimistic update
-    setApplications(prev => prev.map(app => app.id === appId ? { ...app, status, reviewedAt: new Date().toISOString() } : app));
-    setPendingApps(prev => prev.filter(app => app.id !== appId));
-    
-    loadData(); // Background refresh
+    try {
+        await storageService.updateApplicationStatus(appId, status);
+        // Refresh data immediately
+        loadData(true);
+    } catch (err) {
+        console.error("Decision failed", err);
+    }
   };
 
   const handleTogglePriority = async (appId: string, currentPriority: boolean) => {
       try {
           await storageService.togglePriority(appId, !currentPriority);
-          // Optimistic update
-          const updatedApps = applications.map(a => a.id === appId ? {...a, isPriority: !currentPriority} : a);
-          updatedApps.sort((a, b) => {
-              if (a.isPriority && !b.isPriority) return -1;
-              if (!a.isPriority && b.isPriority) return 1;
-              return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-          });
-          setApplications(updatedApps);
-          setPendingApps(updatedApps.filter(a => a.status === 'PENDING'));
+          loadData(true);
       } catch (err) {
           console.error(err);
       }
@@ -105,7 +105,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
       if (!isHOD) return;
       try {
           await storageService.assignApplication(appId, teacherId === 'unassigned' ? null : teacherId);
-          await loadData();
+          loadData(true);
       } catch (err) {
           console.error(err);
       }
@@ -134,11 +134,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
     }, 300);
   };
 
-  // Gesture Handlers
   const handlePointerDown = (e: React.PointerEvent) => {
     if (swipeDirection) return;
     if (e.button !== 0) return;
-    
     setIsDragging(true);
     dragStartRef.current = { x: e.clientX, y: e.clientY };
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -159,23 +157,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
     dragStartRef.current = null;
 
     const threshold = 100;
-    if (dragOffset.x > threshold) {
-      handleSwipe('right');
-    } else if (dragOffset.x < -threshold) {
-      handleSwipe('left');
-    } else {
-      setDragOffset({ x: 0, y: 0 });
-    }
+    if (dragOffset.x > threshold) handleSwipe('right');
+    else if (dragOffset.x < -threshold) handleSwipe('left');
+    else setDragOffset({ x: 0, y: 0 });
   };
 
   const handleRevoke = async (appId: string) => {
     await storageService.updateApplicationStatus(appId, 'PENDING');
-    await loadData();
+    loadData(true);
   };
 
   const getFilteredHistory = () => {
     return applications.filter(app => {
-        if (app.status === 'PENDING') return false;
+        if (app.status?.toUpperCase() === 'PENDING') return false;
         if (!historySearchTerm) return true;
         const term = historySearchTerm.toLowerCase();
         return (
@@ -199,7 +193,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
 
   return (
     <div className={`min-h-screen flex flex-col transition-colors duration-500 ${bgColor}`}>
-      {/* Navbar */}
       <header className={`${navColor} text-white shadow-lg sticky top-0 z-50 transition-colors duration-500`}>
         <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row justify-between items-center gap-4 sm:gap-0">
           <div className="flex items-center gap-2">
@@ -215,7 +208,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
           </div>
           
           <div className="flex items-center justify-between w-full sm:w-auto gap-4">
-            {/* View Switchers */}
             <div className="flex bg-black/10 rounded-lg p-1 mx-auto sm:mx-0 overflow-x-auto">
                 <button 
                     onClick={() => setViewMode('TRADITIONAL')}
@@ -224,7 +216,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                     <List className="w-4 h-4" />
                     <span className="hidden sm:inline">List</span>
                 </button>
-                
                 {canApproveGlobal && (
                     <button 
                         onClick={() => setViewMode('SWIPE')}
@@ -234,7 +225,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                         <span className="hidden sm:inline">Swipe</span>
                     </button>
                 )}
-                
                 <button 
                     onClick={() => setViewMode('HISTORY')}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all text-sm font-medium whitespace-nowrap ${viewMode === 'HISTORY' ? 'bg-white text-gray-900 shadow-sm' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
@@ -242,7 +232,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                     <History className="w-4 h-4" />
                     <span className="hidden sm:inline">History</span>
                 </button>
-
                 {isHOD && (
                     <button 
                         onClick={() => setViewMode('STAFF')}
@@ -254,29 +243,36 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                 )}
             </div>
             
-            <button 
-                onClick={onLogout} 
-                className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/90 hover:text-white"
-                title="Logout"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2">
+                <button 
+                    onClick={() => loadData(true)} 
+                    disabled={isRefreshing}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/90 hover:text-white disabled:opacity-50"
+                    title="Refresh Data"
+                >
+                  <RefreshCcw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                </button>
+                <button 
+                    onClick={onLogout} 
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/90 hover:text-white"
+                    title="Logout"
+                >
+                  <LogOut className="w-5 h-5" />
+                </button>
+            </div>
           </div>
         </div>
       </header>
 
       <main className="flex-1 max-w-5xl mx-auto w-full p-4 sm:p-6 lg:p-8">
-        
-        {isLoading && viewMode === 'TRADITIONAL' ? (
+        {isLoading && viewMode !== 'SWIPE' ? (
              <div className="flex items-center justify-center h-64">
                  <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
              </div>
         ) : (
         <>
-        {/* VIEW 1: TRADITIONAL LIST */}
         {viewMode === 'TRADITIONAL' && (
           <div className="space-y-6 animate-fade-in min-h-[500px]">
-            {/* Dashboard Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
                   <div className="w-12 h-12 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center">
@@ -287,7 +283,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                      <p className="text-2xl font-bold text-gray-900">{stats.pending}</p>
                   </div>
                </div>
-               
                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
                   <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center">
                      <Check className="w-6 h-6" />
@@ -297,7 +292,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                      <p className="text-2xl font-bold text-gray-900">{stats.approved}</p>
                   </div>
                </div>
-
                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
                   <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
                      <X className="w-6 h-6" />
@@ -332,11 +326,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                 {pendingApps.map(app => {
                     const isAssignedToMe = app.assignedTeacherId === user.id;
                     const canAction = canApproveGlobal || isAssignedToMe;
-                    
                     return (
                     <div key={app.id} className={`bg-white p-5 sm:p-6 rounded-xl shadow-sm border hover:shadow-md transition-shadow flex flex-col sm:flex-row justify-between gap-6 group relative ${app.isPriority ? 'border-orange-300 bg-orange-50/30' : 'border-gray-100'} ${isAssignedToMe ? 'ring-2 ring-orange-400 ring-offset-2' : ''}`}>
-                        
-                        {/* Priority Badge/Button */}
                         <button 
                             onClick={() => handleTogglePriority(app.id, !!app.isPriority)}
                             className="absolute top-4 right-4 text-gray-300 hover:text-orange-500 transition-colors z-10"
@@ -344,8 +335,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                         >
                             <Star className={`w-5 h-5 ${app.isPriority ? 'fill-orange-500 text-orange-500' : ''}`} />
                         </button>
-
-                        {/* Thumbnail */}
                         {app.imageUrl ? (
                             <div className="hidden sm:block w-32 h-32 rounded-lg bg-gray-100 shrink-0 overflow-hidden border border-gray-100">
                                 <img src={app.imageUrl} alt="Event" className="w-full h-full object-cover" />
@@ -355,7 +344,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                                 <img src={app.studentProfilePic} alt="Student" className="w-full h-full object-cover" />
                             </div>
                         ) : null}
-
                         <div className="flex-1 space-y-3">
                             <div className="flex flex-col gap-1">
                                 {isAssignedToMe && (
@@ -376,7 +364,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                                     </span>
                                 </div>
                             </div>
-                            
                             <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100/50">
                                 <Calendar className="w-5 h-5 text-orange-500 mt-0.5 flex-shrink-0" />
                                 <div>
@@ -388,13 +375,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                                     </div>
                                 </div>
                             </div>
-
                             <div>
                                 <h5 className="text-xs uppercase tracking-wide text-gray-500 font-bold mb-1">Reason</h5>
                                 <p className="text-gray-600 text-sm leading-relaxed">"{app.reason}"</p>
                             </div>
-
-                            {/* HOD Assignment UI */}
                             {isHOD && (
                                 <div className="flex items-center gap-2 mt-2 bg-gray-50 p-2 rounded-lg w-fit">
                                     <span className="text-xs font-bold text-gray-500 uppercase">Assign To:</span>
@@ -413,8 +397,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                                     </div>
                                 </div>
                             )}
-                            
-                            {/* Assigned Indicator for others */}
                             {!isHOD && !isAssignedToMe && app.assignedTeacherId && (
                                 <div className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
                                     <UserCog className="w-3 h-3" />
@@ -422,7 +404,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                                 </div>
                             )}
                         </div>
-                        
                         <div className="flex sm:flex-col justify-end gap-3 min-w-[120px] sm:border-l sm:border-gray-100 sm:pl-6 pt-4 sm:pt-0 border-t border-gray-100 sm:border-t-0">
                             {canAction ? (
                                 <>
@@ -458,8 +439,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
             )}
           </div>
         )}
-
-        {/* VIEW 2: SWIPE / TINDER MODE */}
         {viewMode === 'SWIPE' && canApproveGlobal && (
           <div className="flex flex-col items-center justify-center h-[calc(100vh-100px)] w-full overflow-hidden relative touch-none">
             {pendingApps.length === 0 ? (
@@ -469,7 +448,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                     </div>
                     <h2 className="text-2xl font-bold text-gray-800 mb-2">No more matches!</h2>
                     <p className="text-gray-500 mb-8">You've reviewed all pending applications.</p>
-                    
                     <div className="space-y-3">
                         <Button onClick={() => setViewMode('HISTORY')} variant="primary" fullWidth themeColor="pink" className="shadow-lg shadow-pink-200">
                             View Decision History
@@ -481,8 +459,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                  </div>
             ) : (
                 <div className="relative w-full max-w-md px-4 h-[75vh] max-h-[700px] flex items-center justify-center">
-                    
-                    {/* Background Stack Animation */}
                     {pendingApps.length > 1 && (
                          <div className={`
                              absolute w-[calc(100%-48px)] h-[95%] bg-white rounded-3xl shadow-sm border border-pink-100 z-0
@@ -493,8 +469,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                              }
                          `}></div>
                     )}
-
-                    {/* Active Card */}
                     <div 
                         onPointerDown={handlePointerDown}
                         onPointerMove={handlePointerMove}
@@ -516,77 +490,52 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                             ${swipeDirection === 'right' ? 'translate-x-[150%] rotate-12 opacity-0' : ''}
                         `}
                     >
-                         {/* Image Section - 65% Height */}
                          <div className="relative h-[65%] w-full bg-gray-200 shrink-0">
-                             {/* Priority Order: Profile Pic -> Event Image -> Placeholder */}
-                             {pendingApps[swipeIndex].studentProfilePic ? (
-                                <img 
-                                    src={pendingApps[swipeIndex].studentProfilePic} 
-                                    alt="Student" 
-                                    className="w-full h-full object-cover pointer-events-none select-none"
-                                    draggable={false}
-                                />
-                             ) : pendingApps[swipeIndex].imageUrl ? (
-                                <img 
-                                    src={pendingApps[swipeIndex].imageUrl} 
-                                    alt="Event" 
-                                    className="w-full h-full object-cover pointer-events-none select-none"
-                                    draggable={false}
-                                />
+                             {pendingApps[swipeIndex]?.studentProfilePic ? (
+                                <img src={pendingApps[swipeIndex].studentProfilePic} alt="Student" className="w-full h-full object-cover pointer-events-none select-none" draggable={false} />
+                             ) : pendingApps[swipeIndex]?.imageUrl ? (
+                                <img src={pendingApps[swipeIndex].imageUrl} alt="Event" className="w-full h-full object-cover pointer-events-none select-none" draggable={false} />
                              ) : (
                                 <div className="w-full h-full bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center flex-col gap-2 text-white">
                                     <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
-                                        <span className="text-4xl font-bold">{pendingApps[swipeIndex].studentName.charAt(0)}</span>
+                                        <span className="text-4xl font-bold">{pendingApps[swipeIndex]?.studentName.charAt(0)}</span>
                                     </div>
                                     <p className="text-sm font-medium opacity-80">No photo available</p>
                                 </div>
                              )}
-
                              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent pointer-events-none"></div>
-
                              <div className="absolute bottom-0 left-0 right-0 p-6 text-white pointer-events-none z-20">
-                                <h2 className="text-3xl font-bold tracking-tight drop-shadow-md truncate">{pendingApps[swipeIndex].studentName}</h2>
+                                <h2 className="text-3xl font-bold tracking-tight drop-shadow-md truncate">{pendingApps[swipeIndex]?.studentName}</h2>
                                 <div className="flex items-center gap-2 text-white/90 font-medium mt-1">
                                     <GraduationCap className="w-4 h-4" /> 
-                                    <span>{pendingApps[swipeIndex].studentUSN}</span>
+                                    <span>{pendingApps[swipeIndex]?.studentUSN}</span>
                                 </div>
                                 <div className="flex flex-wrap gap-2 mt-3">
                                      <span className="px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/20 text-xs font-semibold shadow-sm truncate max-w-full">
-                                        {pendingApps[swipeIndex].eventName}
+                                        {pendingApps[swipeIndex]?.eventName}
                                      </span>
                                      <span className="px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/20 text-xs font-semibold shadow-sm flex items-center gap-1">
                                         <Calendar className="w-3 h-3" />
-                                        {format(new Date(pendingApps[swipeIndex].startDate), 'MMM d')}
+                                        {pendingApps[swipeIndex] && format(new Date(pendingApps[swipeIndex].startDate), 'MMM d')}
                                      </span>
                                 </div>
                              </div>
                          </div>
-                         
                          <div className="flex-1 bg-white p-6 flex flex-col justify-between relative z-10">
                             <div className="relative">
                                 <div className="absolute -left-3 top-0 bottom-0 w-1 bg-pink-200 rounded-full"></div>
                                 <p className="text-gray-600 text-sm leading-relaxed italic pl-3 line-clamp-3 overflow-y-hidden">
-                                    "{pendingApps[swipeIndex].reason}"
+                                    "{pendingApps[swipeIndex]?.reason}"
                                 </p>
                             </div>
-
                             <div className="flex items-center justify-center gap-10 mt-2 pointer-events-auto pb-1">
-                                <button 
-                                    onClick={() => handleSwipe('left')}
-                                    onPointerDown={(e) => e.stopPropagation()} 
-                                    className="group flex flex-col items-center gap-1 focus:outline-none"
-                                >
+                                <button onClick={() => handleSwipe('left')} onPointerDown={(e) => e.stopPropagation()} className="group flex flex-col items-center gap-1 focus:outline-none">
                                     <div className="w-14 h-14 rounded-full border-2 border-red-100 text-red-500 flex items-center justify-center transition-all duration-200 shadow-sm group-hover:scale-110 group-hover:bg-red-50 group-hover:border-red-200 bg-white">
                                         <X className="w-6 h-6" />
                                     </div>
                                     <span className="text-[10px] font-bold uppercase tracking-widest text-red-300 group-hover:text-red-400">Reject</span>
                                 </button>
-                                
-                                <button 
-                                    onClick={() => handleSwipe('right')}
-                                    onPointerDown={(e) => e.stopPropagation()} 
-                                    className="group flex flex-col items-center gap-1 focus:outline-none"
-                                >
+                                <button onClick={() => handleSwipe('right')} onPointerDown={(e) => e.stopPropagation()} className="group flex flex-col items-center gap-1 focus:outline-none">
                                     <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-pink-500 to-rose-600 text-white flex items-center justify-center transition-all duration-200 shadow-lg shadow-pink-200 group-hover:scale-110 group-hover:shadow-pink-300">
                                         <Heart className="w-6 h-6 fill-white" />
                                     </div>
@@ -594,32 +543,17 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                                 </button>
                             </div>
                          </div>
-                         
-                         {(isDragging || swipeDirection) && (
-                            <>
-                                <div className={`absolute top-8 left-8 border-4 border-green-500 text-green-500 rounded-lg px-4 py-2 text-2xl font-bold uppercase tracking-widest opacity-0 transition-opacity ${dragOffset.x > 50 || swipeDirection === 'right' ? 'opacity-100' : ''} rotate-[-15deg] z-50 bg-white/10 backdrop-blur-sm`}>
-                                    Like
-                                </div>
-                                <div className={`absolute top-8 right-8 border-4 border-red-500 text-red-500 rounded-lg px-4 py-2 text-2xl font-bold uppercase tracking-widest opacity-0 transition-opacity ${dragOffset.x < -50 || swipeDirection === 'left' ? 'opacity-100' : ''} rotate-[15deg] z-50 bg-white/10 backdrop-blur-sm`}>
-                                    Nope
-                                </div>
-                            </>
-                         )}
                     </div>
                 </div>
             )}
           </div>
         )}
-
-        {/* VIEW 3: HISTORY */}
         {viewMode === 'HISTORY' && (
           <div className="space-y-6 animate-fade-in pb-10">
             <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                     <h2 className="text-2xl font-bold text-gray-800">Decision History</h2>
                 </div>
-                
-                {/* Search Bar */}
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input 
@@ -630,7 +564,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                         onChange={(e) => setHistorySearchTerm(e.target.value)}
                     />
                 </div>
-
                 <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
                     <div className="overflow-x-auto">
                         <table className="w-full text-left min-w-[750px]">
@@ -694,25 +627,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                                         </td>
                                     </tr>
                                 ))}
-                                {historyApps.length === 0 && (
-                                    <tr>
-                                        <td colSpan={4} className="px-6 py-12 text-center text-gray-400 text-sm">
-                                            <div className="flex flex-col items-center justify-center">
-                                                {historySearchTerm ? (
-                                                    <>
-                                                        <Search className="w-8 h-8 mb-2 opacity-20" />
-                                                        <p>No matches found for "{historySearchTerm}"</p>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <History className="w-8 h-8 mb-2 opacity-20" />
-                                                        <p>No history available yet.</p>
-                                                    </>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )}
                             </tbody>
                         </table>
                     </div>
@@ -720,12 +634,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
             </div>
           </div>
         )}
-
-        {/* VIEW 4: STAFF MANAGEMENT (HOD ONLY) */}
         {viewMode === 'STAFF' && isHOD && (
              <div className="space-y-6 animate-fade-in">
                  <h2 className="text-2xl font-bold text-gray-800">Faculty Management</h2>
-                 
                  <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
                     <table className="w-full text-left">
                         <thead className="bg-gray-50/80 border-b border-gray-100">
@@ -760,10 +671,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                  </div>
              </div>
         )}
-
         </>
         )}
-
       </main>
     </div>
   );

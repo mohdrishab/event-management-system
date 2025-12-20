@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
 export const generateLeaveReason = async (eventName: string, startDate: string, endDate: string, studentName: string): Promise<string> => {
   try {
@@ -14,11 +14,13 @@ export const generateLeaveReason = async (eventName: string, startDate: string, 
       The tone should be academic and polite, requesting approval to attend. Do not include placeholders.
     `;
 
-    const response = await ai.models.generateContent({
+    // Using ai.models.generateContent with model and prompt as per updated guidelines
+    const response: GenerateContentResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
     });
 
+    // response.text is a property getter, not a method
     return response.text || "I would like to request leave to attend this upcoming event.";
   } catch (error) {
     console.error("Gemini generation error:", error);

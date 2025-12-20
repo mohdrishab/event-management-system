@@ -4,15 +4,77 @@ import { supabase } from './supabaseClient';
 import { MOCK_STUDENTS, MOCK_TEACHER, MOCK_HOD, MOCK_JUNIOR_TEACHER } from '../constants';
 
 export const storageService = {
-  getUsers: async (): Promise<User[]> => {
+  // SQL Schema for the user to copy-paste into Supabase SQL Editor
+  REQUIRED_SQL: `
+-- 1. Create Users Table
+CREATE TABLE IF NOT EXISTS public.users (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    name text NOT NULL,
+    usn text UNIQUE,
+    role text NOT NULL CHECK (role IN ('STUDENT', 'TEACHER', 'HOD')),
+    password text NOT NULL,
+    "profilePic" text,
+    "canApprove" boolean DEFAULT false
+);
+
+-- 2. Create Applications Table
+CREATE TABLE IF NOT EXISTS public.applications (
+    id text PRIMARY KEY,
+    "studentId" text NOT NULL,
+    "studentName" text NOT NULL,
+    "studentUSN" text NOT NULL,
+    "studentProfilePic" text,
+    "eventName" text NOT NULL,
+    "startDate" date NOT NULL,
+    "endDate" date NOT NULL,
+    reason text NOT NULL,
+    status text NOT NULL DEFAULT 'PENDING',
+    "timestamp" timestamptz DEFAULT now(),
+    "reviewedAt" timestamptz,
+    "imageUrl" text,
+    "isPriority" boolean DEFAULT false,
+    "assignedTeacherId" text
+);
+
+-- 3. Enable Public Access (Robust RLS Policies)
+-- This allows the app to function for demo purposes without auth setup
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.applications ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public access users" ON public.users;
+DROP POLICY IF EXISTS "Allow public access apps" ON public.applications;
+
+CREATE POLICY "Allow public access users" ON public.users 
+FOR ALL USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow public access apps" ON public.applications 
+FOR ALL USING (true) WITH CHECK (true);
+  `,
+
+  checkDatabaseConnection: async (): Promise<{ ok: boolean; error?: string; code?: string }> => {
     try {
-      const { data, error } = await supabase.from('users').select('*');
-      if (error) throw error;
-      return (data as User[]) || [];
-    } catch (error) {
-      console.warn("Supabase getUsers error:", error);
-      return [];
+      // Check for users table
+      const { error: userError } = await supabase.from('users').select('id').limit(1);
+      if (userError) {
+        return { ok: false, error: userError.message, code: userError.code };
+      }
+      
+      // Check for applications table
+      const { error: appError } = await supabase.from('applications').select('id').limit(1);
+      if (appError) {
+        return { ok: false, error: appError.message, code: appError.code };
+      }
+      
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: 'Database connection failed', code: 'CONNECTION_ERROR' };
     }
+  },
+
+  getUsers: async (): Promise<User[]> => {
+    const { data, error } = await supabase.from('users').select('*');
+    if (error) throw error;
+    return (data as User[]) || [];
   },
 
   getFaculty: async (): Promise<User[]> => {
@@ -29,45 +91,53 @@ export const storageService = {
     if (!searchId) return null;
 
     try {
-        // 1. Try finding user in Supabase with Role Filter
+        const { data: anyUser } = await supabase.from('users')
+          .select('role')
+          .or(`name.ilike.%${searchId}%,usn.ilike.%${searchId}%`)
+          .maybeSingle();
+
+        if (anyUser) {
+          const isActuallyFaculty = anyUser.role === 'TEACHER' || anyUser.role === 'HOD';
+          const wantsStudent = targetRole === 'STUDENT';
+          
+          if (wantsStudent && isActuallyFaculty) {
+            throw new Error("This is a Faculty account. Please use the Faculty tab.");
+          }
+          if (!wantsStudent && !isActuallyFaculty) {
+            throw new Error("This is a Student account. Please use the Student tab.");
+          }
+        }
+
         let query = supabase.from('users').select('*');
-        
         if (targetRole === 'STUDENT') {
             query = query.eq('role', 'STUDENT');
         } else {
             query = query.in('role', ['TEACHER', 'HOD']);
         }
 
-        // Use a safe OR filter
         const { data, error } = await query.or(`name.ilike.%${searchId}%,usn.ilike.%${searchId}%`);
 
         if (!error && data && data.length > 0) {
-            // Verify password (Case-Sensitive)
             const validUser = data.find(u => u.password === password);
             if (validUser) return validUser as User;
         }
-    } catch (e) {
+    } catch (e: any) {
+        if (e.message && e.message.includes("tab")) throw e;
         console.error("Supabase login search failed:", e);
     }
 
-    // 2. FALLBACK: Check Constants / Auto-Seed if not in DB yet
     const lowerSearch = searchId.toLowerCase();
-
     if (targetRole === 'FACULTY') {
-        // Check HOD
         if ((MOCK_HOD.name.toLowerCase() === lowerSearch || lowerSearch === 'hod') && MOCK_HOD.password === password) {
             return await storageService.autoSeedUser(MOCK_HOD);
         }
-        // Check Senior Teacher
         if ((MOCK_TEACHER.name.toLowerCase() === lowerSearch || lowerSearch === 'teacher') && MOCK_TEACHER.password === password) {
              return await storageService.autoSeedUser(MOCK_TEACHER);
         }
-        // Check Junior Teacher
         if (MOCK_JUNIOR_TEACHER.name.toLowerCase() === lowerSearch && MOCK_JUNIOR_TEACHER.password === password) {
              return await storageService.autoSeedUser(MOCK_JUNIOR_TEACHER);
         }
     } else {
-        // Check Students
         const mockStudent = MOCK_STUDENTS.find(s => 
             (s.usn?.toLowerCase() === lowerSearch || s.name.toLowerCase() === lowerSearch) && 
             s.password === password
@@ -76,12 +146,10 @@ export const storageService = {
             return await storageService.autoSeedUser(mockStudent);
         }
     }
-    
     return null;
   },
 
   autoSeedUser: async (mockUser: User): Promise<User> => {
-      // Check if already exists by USN or Name+Role
       let query = supabase.from('users').select('*').eq('role', mockUser.role);
       if (mockUser.usn) {
           query = query.eq('usn', mockUser.usn);
@@ -92,24 +160,15 @@ export const storageService = {
       const { data: existing } = await query.maybeSingle();
       if (existing) return existing as User;
 
-      // Ensure canApprove is set correctly for teachers
-      let canApprove = mockUser.canApprove;
-      if (canApprove === undefined) {
-          canApprove = mockUser.role === 'HOD';
-      }
-
       const { data: newUser, error } = await supabase.from('users').insert([{
              name: mockUser.name,
              usn: mockUser.usn,
              role: mockUser.role,
              password: mockUser.password,
-             canApprove: canApprove
+             canApprove: mockUser.role === 'HOD' ? true : !!mockUser.canApprove
         }]).select().single();
 
-      if (error) {
-          console.error("Auto-seed insertion failed:", error);
-          throw error;
-      }
+      if (error) throw error;
       return newUser as User;
   },
 
@@ -125,17 +184,9 @@ export const storageService = {
         throw new Error("A student with this USN is already registered.");
     }
 
-    const newUser = {
-      name,
-      usn,
-      password,
-      role: 'STUDENT',
-      profilePic: ''
-    };
-
     const { data, error } = await supabase
       .from('users')
-      .insert([newUser])
+      .insert([{ name, usn, password, role: 'STUDENT' }])
       .select()
       .single();
 
@@ -146,51 +197,67 @@ export const storageService = {
   updateUser: async (updatedUser: User): Promise<void> => {
     const { error } = await supabase
       .from('users')
-      .update({ profilePic: updatedUser.profilePic })
+      .update({
+        name: updatedUser.name,
+        profilePic: updatedUser.profilePic,
+        canApprove: updatedUser.canApprove
+      })
       .eq('id', updatedUser.id);
     if (error) throw error;
   },
 
-  updateFacultyPermission: async (userId: string, canApprove: boolean): Promise<void> => {
-    const { error } = await supabase
-      .from('users')
-      .update({ canApprove })
-      .eq('id', userId);
+  seedStudents: async (): Promise<void> => {
+    const studentsToSeed = MOCK_STUDENTS.map(s => ({
+      name: s.name,
+      usn: s.usn,
+      role: s.role,
+      password: s.password,
+      canApprove: false
+    }));
+    
+    const { error } = await supabase.from('users').upsert(studentsToSeed, { onConflict: 'usn' });
     if (error) throw error;
   },
 
   getApplications: async (): Promise<LeaveApplication[]> => {
     const { data, error } = await supabase
       .from('applications')
-      .select('*');
+      .select('*')
+      .order('timestamp', { ascending: false });
     if (error) throw error;
     return (data as LeaveApplication[]) || [];
   },
 
   saveApplication: async (app: LeaveApplication): Promise<void> => {
-    const { id, ...appData } = app;
+    // Ensure data is flat and null for optional fields
+    const payload = {
+      ...app,
+      studentProfilePic: app.studentProfilePic || null,
+      imageUrl: app.imageUrl || null,
+      reviewedAt: app.reviewedAt || null,
+      assignedTeacherId: app.assignedTeacherId || null
+    };
+    
+    const { error } = await supabase.from('applications').insert([payload]);
+    if (error) {
+        console.error("Supabase Save Error:", error);
+        throw error;
+    }
+  },
+
+  updateApplicationStatus: async (appId: string, status: 'APPROVED' | 'REJECTED' | 'PENDING'): Promise<void> => {
     const { error } = await supabase
       .from('applications')
-      .insert([appData]); 
+      .update({ status, reviewedAt: new Date().toISOString() })
+      .eq('id', appId);
     if (error) throw error;
   },
 
-  updateApplicationStatus: async (id: string, status: 'APPROVED' | 'REJECTED' | 'PENDING'): Promise<void> => {
-    const { error } = await supabase
-      .from('applications')
-      .update({ 
-        status: status,
-        reviewedAt: status === 'PENDING' ? null : new Date().toISOString()
-      })
-      .eq('id', id);
-    if (error) throw error;
-  },
-
-  togglePriority: async (id: string, isPriority: boolean): Promise<void> => {
+  togglePriority: async (appId: string, isPriority: boolean): Promise<void> => {
     const { error } = await supabase
       .from('applications')
       .update({ isPriority })
-      .eq('id', id);
+      .eq('id', appId);
     if (error) throw error;
   },
 
@@ -202,45 +269,11 @@ export const storageService = {
     if (error) throw error;
   },
 
-  seedStudents: async (): Promise<string> => {
-    // Seed core faculty first
-    await storageService.upsertUser(MOCK_HOD);
-    await storageService.upsertUser(MOCK_TEACHER);
-    await storageService.upsertUser(MOCK_JUNIOR_TEACHER);
-
-    // Seed Students in batches
-    const BATCH_SIZE = 10;
-    for (let i = 0; i < MOCK_STUDENTS.length; i += BATCH_SIZE) {
-        const batch = MOCK_STUDENTS.slice(i, i + BATCH_SIZE);
-        await Promise.all(batch.map(s => storageService.upsertUser(s)));
-    }
-    
-    return `System successfully initialized with all demo records.`;
-  },
-
-  upsertUser: async (user: Partial<User>) => {
-      let query = supabase.from('users').select('id').eq('role', user.role);
-      if (user.usn) {
-          query = query.eq('usn', user.usn);
-      } else if (user.name) {
-          query = query.eq('name', user.name);
-      }
-      
-      const { data: existing } = await query.maybeSingle();
-
-      if (existing) {
-          await supabase.from('users').update({ 
-              password: user.password,
-              canApprove: user.canApprove 
-          }).eq('id', existing.id);
-      } else {
-          await supabase.from('users').insert([{
-              name: user.name,
-              usn: user.usn,
-              role: user.role,
-              password: user.password,
-              canApprove: user.canApprove
-          }]);
-      }
+  updateFacultyPermission: async (userId: string, canApprove: boolean): Promise<void> => {
+    const { error } = await supabase
+      .from('users')
+      .update({ canApprove })
+      .eq('id', userId);
+    if (error) throw error;
   }
 };

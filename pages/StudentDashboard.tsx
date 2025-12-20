@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { User, LeaveApplication, ApplicationStatus } from '../types';
 import { storageService } from '../services/storageService';
@@ -60,39 +61,24 @@ const ProfileCropperModal: React.FC<{
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // Set passport size ratio (3:4) - Higher resolution for crispness
         canvas.width = 450;
         canvas.height = 600;
 
-        // Clear
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Calculate draw parameters
         const img = imageRef.current;
-        
-        // We need to map the visual offset/zoom to the canvas coordinate system
-        // Visual Viewport is 300x400. Canvas is 450x600 (1.5x scale)
         const scaleFactor = 1.5; 
         
-        // The image acts as if it's centered. 
-        // We simply draw the image transformed by the user's interaction
-        
-        // Save context
         ctx.save();
-        
-        // Move to center of canvas
         ctx.translate(canvas.width / 2, canvas.height / 2);
         ctx.scale(zoom, zoom);
         ctx.translate(offset.x * scaleFactor, offset.y * scaleFactor);
         
-        // Draw image centered
-        // We use natural dimensions to ensure quality
         const aspect = img.naturalWidth / img.naturalHeight;
         let drawWidth = canvas.width;
         let drawHeight = canvas.width / aspect;
 
-        // If height is too small to cover, scale by height
         if (drawHeight < canvas.height) {
             drawHeight = canvas.height;
             drawWidth = canvas.height * aspect;
@@ -144,7 +130,6 @@ const ProfileCropperModal: React.FC<{
                                     onPointerLeave={handlePointerUp}
                                     draggable={false}
                                 />
-                                {/* Guidelines overlay */}
                                 <div className="absolute inset-0 pointer-events-none border border-white/20">
                                     <div className="w-full h-1/3 border-b border-white/20"></div>
                                     <div className="w-full h-1/3 border-b border-white/20 top-1/3 absolute"></div>
@@ -186,7 +171,6 @@ const ProfileCropperModal: React.FC<{
                     <Button variant="primary" onClick={handleSave} disabled={!imageSrc} className="flex-1">Save Profile Photo</Button>
                 </div>
             </div>
-            {/* Hidden Canvas for Processing */}
             <canvas ref={canvasRef} className="hidden" />
         </div>
     );
@@ -197,7 +181,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
   const [user, setUser] = useState(initialUser);
   const [applications, setApplications] = useState<LeaveApplication[]>([]);
   
-  // Form State
   const [eventName, setEventName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -207,8 +190,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'ALL' | ApplicationStatus>('ALL');
-  
-  // Profile Modal State
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   useEffect(() => {
@@ -217,9 +198,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
 
   const loadApplications = async () => {
     try {
-      const allApps = await storageService.getApplications();
-      const myApps = allApps.filter(app => app.studentId === user.id).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setApplications(myApps);
+      const myApps = await storageService.getApplications();
+      setApplications(myApps.filter(a => a.studentId === user.id));
     } catch (error) {
       console.error("Failed to load applications", error);
     }
@@ -228,14 +208,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 2000000) { // Limit to 2MB for DB performance
+      if (file.size > 2000000) {
         alert("File size too large. Please upload an image under 2MB.");
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setSelectedImage(reader.result as string);
-      };
+      reader.onloadend = () => setSelectedImage(reader.result as string);
       reader.readAsDataURL(file);
     }
   };
@@ -263,32 +241,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
     setIsSubmitting(true);
 
     const newApp: LeaveApplication = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: `app_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       studentId: user.id,
       studentName: user.name,
       studentUSN: user.usn || '',
-      studentProfilePic: user.profilePic, // Attach current profile pic
+      studentProfilePic: user.profilePic || null,
       eventName,
       startDate,
       endDate,
       reason,
       status: 'PENDING',
       timestamp: new Date().toISOString(),
-      imageUrl: selectedImage || undefined
+      imageUrl: selectedImage || null,
+      isPriority: false,
+      assignedTeacherId: null
     };
 
     try {
         await storageService.saveApplication(newApp);
-        // Reset Form
         setEventName('');
         setStartDate('');
         setEndDate('');
         setReason('');
         setSelectedImage(null);
         await loadApplications();
-    } catch (error) {
-        console.error("Failed to save application", error);
-        alert("Failed to submit application");
+        alert("Application submitted successfully!");
+    } catch (error: any) {
+        console.error("Submission failed:", error);
+        alert(`Failed to submit application: ${error.message || 'Unknown error'}`);
     } finally {
         setIsSubmitting(false);
     }
@@ -337,13 +317,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <ProfileCropperModal 
-          isOpen={isProfileModalOpen} 
-          onClose={() => setIsProfileModalOpen(false)} 
-          onSave={handleProfileSave}
-      />
+      <ProfileCropperModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onSave={handleProfileSave} />
 
-      {/* Navbar */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-2">
@@ -353,301 +328,92 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
             <h1 className="text-xl font-bold tracking-tight text-gray-800">UniEvent<span className="text-orange-600">Student</span></h1>
           </div>
           <div className="flex items-center gap-4">
-             {/* Profile Section */}
              <div className="flex items-center gap-3">
                  <div className="hidden sm:flex flex-col text-right">
                     <span className="text-sm font-semibold text-gray-900 leading-tight">{user.name}</span>
                     <span className="text-xs text-gray-500">{user.usn}</span>
                  </div>
-                 <button 
-                    onClick={() => setIsProfileModalOpen(true)}
-                    className="relative w-10 h-10 rounded-full bg-gray-200 overflow-hidden border-2 border-transparent hover:border-orange-500 transition-all shadow-sm group"
-                    title="Change Profile Photo"
-                 >
-                     {user.profilePic ? (
-                         <img src={user.profilePic} alt="Profile" className="w-full h-full object-cover" />
-                     ) : (
-                         <div className="w-full h-full bg-orange-100 flex items-center justify-center text-orange-600 font-bold">
-                             {user.name.charAt(0)}
-                         </div>
-                     )}
-                     <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                         <Camera className="w-4 h-4 text-white" />
-                     </div>
+                 <button onClick={() => setIsProfileModalOpen(true)} className="relative w-10 h-10 rounded-full bg-gray-200 overflow-hidden border-2 border-transparent hover:border-orange-500 transition-all shadow-sm group">
+                     {user.profilePic ? <img src={user.profilePic} alt="Profile" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-orange-100 flex items-center justify-center text-orange-600 font-bold">{user.name.charAt(0)}</div>}
+                     <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Camera className="w-4 h-4 text-white" /></div>
                  </button>
              </div>
             <div className="h-6 w-px bg-gray-200 mx-1"></div>
-            <button onClick={onLogout} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-600" title="Logout">
-              <LogOut className="w-5 h-5" />
-            </button>
+            <button onClick={onLogout} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-600"><LogOut className="w-5 h-5" /></button>
           </div>
         </div>
       </header>
 
       <main className="flex-1 max-w-7xl mx-auto w-full p-4 lg:p-8 space-y-8">
-        
-        {/* Statistics Overview */}
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
-                 <BarChart3 className="w-6 h-6" />
-              </div>
-              <div>
-                 <p className="text-sm text-gray-500 font-medium">Total Applications</p>
-                 <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
-              </div>
+              <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center"><BarChart3 className="w-6 h-6" /></div>
+              <div><p className="text-sm text-gray-500 font-medium">Total Applications</p><p className="text-2xl font-bold text-gray-900">{stats.total}</p></div>
            </div>
-           
            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 rounded-full bg-yellow-50 text-yellow-600 flex items-center justify-center">
-                 <Hourglass className="w-6 h-6" />
-              </div>
-              <div>
-                 <p className="text-sm text-gray-500 font-medium">Pending Review</p>
-                 <p className="text-2xl font-bold text-gray-900">{stats.pending}</p>
-              </div>
+              <div className="w-12 h-12 rounded-full bg-yellow-50 text-yellow-600 flex items-center justify-center"><Hourglass className="w-6 h-6" /></div>
+              <div><p className="text-sm text-gray-500 font-medium">Pending Review</p><p className="text-2xl font-bold text-gray-900">{stats.pending}</p></div>
            </div>
-
            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center">
-                 <CalendarDays className="w-6 h-6" />
-              </div>
-              <div>
-                 <p className="text-sm text-gray-500 font-medium">Upcoming Approved</p>
-                 <p className="text-2xl font-bold text-gray-900">{stats.upcoming}</p>
-              </div>
+              <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center"><CalendarDays className="w-6 h-6" /></div>
+              <div><p className="text-sm text-gray-500 font-medium">Upcoming Approved</p><p className="text-2xl font-bold text-gray-900">{stats.upcoming}</p></div>
            </div>
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Left Column: Apply Form */}
             <section className="lg:col-span-4 xl:col-span-4">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sticky top-24">
-                <h2 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2 pb-4 border-b border-gray-50">
-                    <Calendar className="w-5 h-5 text-orange-600" />
-                    New Application
-                </h2>
+                <h2 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2 pb-4 border-b border-gray-50"><Calendar className="w-5 h-5 text-orange-600" /> New Application</h2>
                 <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Event Details</label>
-                    <input
-                    type="text"
-                    placeholder="Event Name (e.g. Hackathon 2024)"
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all"
-                    value={eventName}
-                    onChange={(e) => setEventName(e.target.value)}
-                    required
-                    disabled={isSubmitting}
-                    />
+                    <input type="text" placeholder="Event Name (e.g. Hackathon 2024)" className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none transition-all" value={eventName} onChange={(e) => setEventName(e.target.value)} required disabled={isSubmitting} />
                 </div>
-                
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Starts</label>
-                    <input
-                        type="date"
-                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none text-sm transition-all"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                        required
-                        disabled={isSubmitting}
-                    />
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Starts</label>
+                        <input type="date" className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none text-sm transition-all" value={startDate} onChange={(e) => setStartDate(e.target.value)} required disabled={isSubmitting} />
                     </div>
                     <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Ends</label>
-                    <input
-                        type="date"
-                        className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none text-sm transition-all"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        min={startDate}
-                        required
-                        disabled={isSubmitting}
-                    />
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Ends</label>
+                        <input type="date" className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none text-sm transition-all" value={endDate} onChange={(e) => setEndDate(e.target.value)} min={startDate} required disabled={isSubmitting} />
                     </div>
                 </div>
-
-                {getDuration() && (
-                    <div className="text-xs text-orange-700 font-medium bg-orange-50 px-3 py-2 rounded-lg flex items-center justify-center gap-2 border border-orange-100">
-                        <Clock className="w-3.5 h-3.5" /> Total Duration: {getDuration()}
-                    </div>
-                )}
-
-                {/* Image Upload */}
+                {getDuration() && <div className="text-xs text-orange-700 font-medium bg-orange-50 px-3 py-2 rounded-lg flex items-center justify-center gap-2 border border-orange-100"><Clock className="w-3.5 h-3.5" /> Total Duration: {getDuration()}</div>}
                 <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Event Image (Optional)</label>
                     <div className="relative group">
-                        <input 
-                            type="file" 
-                            accept="image/*"
-                            onChange={handleImageChange}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            disabled={isSubmitting}
-                        />
+                        <input type="file" accept="image/*" onChange={handleImageChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" disabled={isSubmitting} />
                         <div className={`w-full h-32 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-2 transition-all ${selectedImage ? 'border-orange-500 bg-orange-50' : 'border-gray-300 bg-gray-50 group-hover:border-orange-400 group-hover:bg-orange-50/50'}`}>
-                             {selectedImage ? (
-                                 <img src={selectedImage} alt="Preview" className="h-full w-full object-cover rounded-xl opacity-80" />
-                             ) : (
-                                 <>
-                                    <Upload className="w-6 h-6 text-gray-400 group-hover:text-orange-500" />
-                                    <span className="text-xs text-gray-500 group-hover:text-orange-600">Click to upload image</span>
-                                 </>
-                             )}
+                             {selectedImage ? <img src={selectedImage} alt="Preview" className="h-full w-full object-cover rounded-xl opacity-80" /> : <><Upload className="w-6 h-6 text-gray-400 group-hover:text-orange-500" /><span className="text-xs text-gray-500 group-hover:text-orange-600">Click to upload image</span></>}
                         </div>
                     </div>
                 </div>
-
                 <div>
-                    <div className="flex justify-between items-center mb-1.5">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-500">Statement of Purpose</label>
-                    <button 
-                        type="button"
-                        onClick={handleAiDraft}
-                        disabled={isGenerating || isSubmitting}
-                        className="text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-50 px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium disabled:opacity-50"
-                    >
-                        <Sparkles className="w-3 h-3" />
-                        {isGenerating ? 'Writing...' : 'AI Write'}
-                    </button>
-                    </div>
-                    <textarea
-                    rows={4}
-                    placeholder="Why do you want to attend this event?"
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all"
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    required
-                    disabled={isSubmitting}
-                    />
+                    <div className="flex justify-between items-center mb-1.5"><label className="block text-xs font-bold uppercase tracking-wider text-gray-500">Statement of Purpose</label><button type="button" onClick={handleAiDraft} disabled={isGenerating || isSubmitting} className="text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-50 px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium disabled:opacity-50"><Sparkles className="w-3 h-3" /> {isGenerating ? 'Writing...' : 'AI Write'}</button></div>
+                    <textarea rows={4} placeholder="Why do you want to attend this event?" className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all" value={reason} onChange={(e) => setReason(e.target.value)} required disabled={isSubmitting} />
                 </div>
-
-                <Button fullWidth type="submit" disabled={isGenerating || isSubmitting} size="lg" className="shadow-lg shadow-orange-200">
-                    {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin"/> : 'Submit Request'}
-                </Button>
+                <Button fullWidth type="submit" disabled={isGenerating || isSubmitting} size="lg" className="shadow-lg shadow-orange-200">{isSubmitting ? <Loader2 className="w-5 h-5 animate-spin"/> : 'Submit Request'}</Button>
                 </form>
             </div>
             </section>
 
-            {/* Right Column: Applications List */}
             <section className="lg:col-span-8 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <h2 className="text-xl font-bold text-gray-800">Application History</h2>
-                
-                {/* Filter Buttons */}
                 <div className="flex items-center bg-white p-1 rounded-lg border border-gray-200 shadow-sm overflow-x-auto">
-                <button
-                    onClick={() => setFilterStatus('ALL')}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
-                    filterStatus === 'ALL'
-                        ? 'bg-gray-800 text-white shadow-sm'
-                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
-                >
-                    All <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'ALL' ? 'bg-gray-600' : 'bg-gray-100'}`}>{stats.total}</span>
-                </button>
+                <button onClick={() => setFilterStatus('ALL')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'ALL' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>All <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'ALL' ? 'bg-gray-600' : 'bg-gray-100'}`}>{stats.total}</span></button>
                 <div className="w-px h-4 bg-gray-200 mx-1"></div>
-                <button
-                    onClick={() => setFilterStatus('PENDING')}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
-                    filterStatus === 'PENDING'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
-                >
-                    Pending <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'PENDING' ? 'bg-yellow-200/50' : 'bg-gray-100'}`}>{stats.pending}</span>
-                </button>
-                <button
-                    onClick={() => setFilterStatus('APPROVED')}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
-                    filterStatus === 'APPROVED'
-                        ? 'bg-green-100 text-green-800'
-                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
-                >
-                    Approved <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'APPROVED' ? 'bg-green-200/50' : 'bg-gray-100'}`}>{stats.approved}</span>
-                </button>
-                <button
-                    onClick={() => setFilterStatus('REJECTED')}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
-                    filterStatus === 'REJECTED'
-                        ? 'bg-red-100 text-red-800'
-                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
-                >
-                    Rejected <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'REJECTED' ? 'bg-red-200/50' : 'bg-gray-100'}`}>{stats.rejected}</span>
-                </button>
+                <button onClick={() => setFilterStatus('PENDING')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'PENDING' ? 'bg-yellow-100 text-yellow-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Pending <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'PENDING' ? 'bg-yellow-200/50' : 'bg-gray-100'}`}>{stats.pending}</span></button>
+                <button onClick={() => setFilterStatus('APPROVED')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'APPROVED' ? 'bg-green-100 text-green-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Approved <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'APPROVED' ? 'bg-green-200/50' : 'bg-gray-100'}`}>{stats.approved}</span></button>
+                <button onClick={() => setFilterStatus('REJECTED')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'REJECTED' ? 'bg-red-100 text-red-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Rejected <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'REJECTED' ? 'bg-red-200/50' : 'bg-gray-100'}`}>{stats.rejected}</span></button>
                 </div>
             </div>
 
-            {/* Applications List */}
             <div className="space-y-4">
-                {filteredApplications.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border-2 border-dashed border-gray-200 text-center">
-                    <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                         <Calendar className="w-6 h-6 text-gray-400" />
-                    </div>
-                    <h3 className="text-lg font-medium text-gray-900">No applications found</h3>
-                    <p className="text-gray-500 text-sm max-w-xs mx-auto mt-1">
-                        {filterStatus === 'ALL' 
-                        ? "You haven't filed any leave requests yet." 
-                        : `You have no ${filterStatus.toLowerCase()} requests.`}
-                    </p>
-                </div>
-                )}
-                
+                {filteredApplications.length === 0 && (<div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border-2 border-dashed border-gray-200 text-center"><div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4"><Calendar className="w-6 h-6 text-gray-400" /></div><h3 className="text-lg font-medium text-gray-900">No applications found</h3><p className="text-gray-500 text-sm max-w-xs mx-auto mt-1">{filterStatus === 'ALL' ? "You haven't filed any leave requests yet." : `You have no ${filterStatus.toLowerCase()} requests.`}</p></div>)}
                 {filteredApplications.map((app) => (
-                <div key={app.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group">
-                    <div className="flex flex-col sm:flex-row">
-                        {/* Image Section */}
-                        <div className="sm:w-48 h-32 sm:h-auto bg-gray-100 relative shrink-0">
-                            {app.imageUrl ? (
-                                <img src={app.imageUrl} alt={app.eventName} className="w-full h-full object-cover" />
-                            ) : (
-                                <div className="w-full h-full flex items-center justify-center bg-gray-50 text-gray-300">
-                                    <ImageIcon className="w-8 h-8" />
-                                </div>
-                            )}
-                            <div className="absolute top-2 left-2 sm:hidden">
-                                {getStatusBadge(app.status)}
-                            </div>
-                        </div>
-
-                        {/* Content Section */}
-                        <div className="flex-1 p-5 flex flex-col justify-between">
-                             <div>
-                                 <div className="flex justify-between items-start mb-2">
-                                     <div>
-                                         <h3 className="font-bold text-lg text-gray-900 leading-tight">{app.eventName}</h3>
-                                         <div className="flex items-center gap-2 text-gray-500 text-xs mt-1">
-                                            <Calendar className="w-3 h-3"/> 
-                                            <span className="font-medium">{format(new Date(app.startDate), 'MMM d, yyyy')}</span>
-                                            <ArrowRight className="w-3 h-3" />
-                                            <span className="font-medium">{format(new Date(app.endDate), 'MMM d, yyyy')}</span>
-                                        </div>
-                                     </div>
-                                     <div className="hidden sm:block">
-                                         {getStatusBadge(app.status)}
-                                     </div>
-                                 </div>
-                                 <p className="text-gray-600 text-sm line-clamp-2 mb-4 bg-gray-50 p-2 rounded border border-gray-100/50">
-                                     {app.reason}
-                                 </p>
-                             </div>
-                             
-                             <div className="flex items-center justify-between pt-3 border-t border-gray-50">
-                                 <div className="text-xs text-gray-400">
-                                     Applied {format(new Date(app.timestamp), 'MMM d')}
-                                 </div>
-                                 {app.status === 'APPROVED' && isFuture(new Date(app.startDate)) && (
-                                     <span className="text-xs font-bold text-orange-600 bg-orange-50 px-2 py-1 rounded flex items-center gap-1">
-                                         <Hourglass className="w-3 h-3" /> Upcoming
-                                     </span>
-                                 )}
-                             </div>
-                        </div>
-                    </div>
-                </div>
-                ))}
+                <div key={app.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group"><div className="flex flex-col sm:flex-row"><div className="sm:w-48 h-32 sm:h-auto bg-gray-100 relative shrink-0">{app.imageUrl ? <img src={app.imageUrl} alt={app.eventName} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-gray-50 text-gray-300"><ImageIcon className="w-8 h-8" /></div>}<div className="absolute top-2 left-2 sm:hidden">{getStatusBadge(app.status)}</div></div><div className="flex-1 p-5 flex flex-col justify-between"><div><div className="flex justify-between items-start mb-2"><div><h3 className="font-bold text-lg text-gray-900 leading-tight">{app.eventName}</h3><div className="flex items-center gap-2 text-gray-500 text-xs mt-1"><Calendar className="w-3 h-3"/><span className="font-medium">{format(new Date(app.startDate), 'MMM d, yyyy')}</span><ArrowRight className="w-3 h-3" /><span className="font-medium">{format(new Date(app.endDate), 'MMM d, yyyy')}</span></div></div><div className="hidden sm:block">{getStatusBadge(app.status)}</div></div><p className="text-gray-600 text-sm line-clamp-2 mb-4 bg-gray-50 p-2 rounded border border-gray-100/50">{app.reason}</p></div><div className="flex items-center justify-between pt-3 border-t border-gray-50"><div className="text-xs text-gray-400">Applied {format(new Date(app.timestamp), 'MMM d')}</div>{app.status === 'APPROVED' && isFuture(new Date(app.startDate)) && <span className="text-xs font-bold text-orange-600 bg-orange-50 px-2 py-1 rounded flex items-center gap-1"><Hourglass className="w-3 h-3" /> Upcoming</span>}</div></div></div></div>))}
             </div>
             </section>
         </div>
