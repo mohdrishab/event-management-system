@@ -96,13 +96,24 @@ export const storageService = {
     if (error) throw error;
   },
 
-  updateApplicationStatus: async (appId: string, status: 'approved' | 'rejected' | 'pending'): Promise<void> => {
-    const { error } = await supabase
-      .from('applications')
-      .update({ status })
-      .eq('id', appId);
-    if (error) throw error;
-  },
+ updateApplicationStatus: async (
+  appId: string,
+  status: 'approved' | 'rejected' | 'pending',
+  actionBy?: string,
+  actionByName?: string
+): Promise<void> => {
+  const { error } = await supabase
+    .from('applications')
+    .update({
+      status,
+      action_by: actionBy,
+      action_by_name: actionByName,
+      action_at: new Date().toISOString()
+    })
+    .eq('id', appId);
+
+  if (error) throw error;
+}
 
   togglePriority: async (appId: string, isPriority: boolean): Promise<void> => {
     const { error } = await supabase
