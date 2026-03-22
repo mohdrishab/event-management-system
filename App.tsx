@@ -4,6 +4,16 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'r
 import { Login } from './pages/Login';
 import { StudentDashboard } from './pages/StudentDashboard';
 import { TeacherDashboard } from './pages/TeacherDashboard';
+import { HodDashboardLayout } from './pages/hod/HodDashboardLayout';
+import { HodOverviewPage } from './pages/hod/HodOverviewPage';
+import { HodRequestsPage } from './pages/hod/HodRequestsPage';
+import { HodRequestDetailPage } from './pages/hod/HodRequestDetailPage';
+import { HodStudentsPage } from './pages/hod/HodStudentsPage';
+import { HodStudentProfilePage } from './pages/hod/HodStudentProfilePage';
+import { HodStaffPage } from './pages/hod/HodStaffPage';
+import { HodReportsPage } from './pages/hod/HodReportsPage';
+import { HodNotificationsPage } from './pages/hod/HodNotificationsPage';
+import { HodSettingsPage } from './pages/hod/HodSettingsPage';
 import { User } from './types';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
@@ -108,7 +118,20 @@ function AppRoutes() {
       <Route path="/login" element={!user ? <Login onLogin={handleLogin} /> : <Navigate to={user.role === 'student' ? '/student-dashboard' : user.role === 'professor' ? '/teacher-dashboard' : '/hod-dashboard'} />} />
       <Route path="/student-dashboard" element={user?.role === 'student' ? <StudentDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/login" />} />
       <Route path="/teacher-dashboard" element={user?.role === 'professor' ? <TeacherDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/login" />} />
-      <Route path="/hod-dashboard" element={user?.role === 'hod' ? <TeacherDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/login" />} />
+      <Route
+        path="/hod-dashboard"
+        element={user?.role === 'hod' ? <HodDashboardLayout user={user} onLogout={handleLogout} /> : <Navigate to="/login" />}
+      >
+        <Route index element={<HodOverviewPage />} />
+        <Route path="requests" element={<HodRequestsPage />} />
+        <Route path="requests/:id" element={<HodRequestDetailPage />} />
+        <Route path="students" element={<HodStudentsPage />} />
+        <Route path="students/:studentId" element={<HodStudentProfilePage />} />
+        <Route path="staff" element={<HodStaffPage />} />
+        <Route path="reports" element={<HodReportsPage />} />
+        <Route path="notifications" element={<HodNotificationsPage />} />
+        <Route path="settings" element={<HodSettingsPage />} />
+      </Route>
       <Route path="*" element={<Navigate to="/login" />} />
     </Routes>
   );
