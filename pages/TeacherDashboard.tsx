@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { User, LeaveApplication } from '../types';
 import { storageService } from '../services/storageService';
 import { Button } from '../components/Button';
-import { LogOut, List, Layers, History, Check, X, Undo2, Heart, Calendar, GraduationCap, ArrowRight, Search, Clock, Loader2, Star, Users, UserCog, ChevronDown, RefreshCcw } from 'lucide-react';
+import { DashboardLayout } from '../components/layout';
+import { Check, X, Undo2, Heart, Calendar, GraduationCap, ArrowRight, Search, Clock, Loader2, Star, Users, UserCog, ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface TeacherDashboardProps {
@@ -185,83 +186,39 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
   }), [pendingApps.length, applications]);
 
   const isDatingMode = viewMode === 'SWIPE';
-  const bgColor = isDatingMode ? 'bg-pink-50' : 'bg-gray-50';
-  const navColor = isDatingMode ? 'bg-pink-600' : 'bg-orange-600';
+
+  const portalTitle = isDatingMode ? 'Faculty Match' : isHOD ? 'HOD Portal' : 'Faculty Portal';
+  const pageLabel =
+    viewMode === 'TRADITIONAL'
+      ? 'Pending requests'
+      : viewMode === 'SWIPE'
+        ? 'Swipe review'
+        : viewMode === 'HISTORY'
+          ? 'Decision history'
+          : 'Faculty management';
 
   return (
-    <div className={`min-h-screen flex flex-col transition-colors duration-500 ${bgColor}`}>
-      <header className={`${navColor} text-white shadow-lg sticky top-0 z-50 transition-colors duration-500`}>
-        <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row justify-between items-center gap-4 sm:gap-0">
-          <div className="flex items-center gap-2">
-             <div className="bg-white/20 p-2 rounded-lg">
-                {isDatingMode ? <Heart className="w-5 h-5" /> : <GraduationCap className="w-5 h-5" />}
-             </div>
-             <div>
-                 <h1 className="text-xl font-bold tracking-tight">
-                    {isDatingMode ? 'Faculty Match' : isHOD ? 'HOD Portal' : 'Faculty Portal'}
-                 </h1>
-                 <p className="text-xs text-white/80">{user.name} {isHOD && '(Admin)'}</p>
-             </div>
-          </div>
-          
-          <div className="flex items-center justify-between w-full sm:w-auto gap-4">
-            <div className="flex bg-black/10 rounded-lg p-1 mx-auto sm:mx-0 overflow-x-auto">
-                <button 
-                    onClick={() => setViewMode('TRADITIONAL')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all text-sm font-medium whitespace-nowrap ${viewMode === 'TRADITIONAL' ? 'bg-white text-gray-900 shadow-sm' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
-                >
-                    <List className="w-4 h-4" />
-                    <span className="hidden sm:inline">List</span>
-                </button>
-                {canApproveGlobal && (
-                    <button 
-                        onClick={() => setViewMode('SWIPE')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all text-sm font-medium whitespace-nowrap ${viewMode === 'SWIPE' ? 'bg-white text-pink-600 shadow-sm' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
-                    >
-                        <Layers className="w-4 h-4" />
-                        <span className="hidden sm:inline">Swipe</span>
-                    </button>
-                )}
-                <button 
-                    onClick={() => setViewMode('HISTORY')}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all text-sm font-medium whitespace-nowrap ${viewMode === 'HISTORY' ? 'bg-white text-gray-900 shadow-sm' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
-                >
-                    <History className="w-4 h-4" />
-                    <span className="hidden sm:inline">History</span>
-                </button>
-                {isHOD && (
-                    <button 
-                        onClick={() => setViewMode('STAFF')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all text-sm font-medium whitespace-nowrap ${viewMode === 'STAFF' ? 'bg-white text-gray-900 shadow-sm' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
-                    >
-                        <Users className="w-4 h-4" />
-                        <span className="hidden sm:inline">Staff</span>
-                    </button>
-                )}
-            </div>
-            
-            <div className="flex items-center gap-2">
-                <button 
-                    onClick={() => loadData(true)} 
-                    disabled={isRefreshing}
-                    className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/90 hover:text-white disabled:opacity-50"
-                    title="Refresh Data"
-                >
-                  <RefreshCcw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                </button>
-                <button 
-                    onClick={onLogout} 
-                    className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/90 hover:text-white"
-                    title="Logout"
-                >
-                  <LogOut className="w-5 h-5" />
-                </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-5xl mx-auto w-full p-4 sm:p-6 lg:p-8">
+    <DashboardLayout
+      isSwipeTheme={isDatingMode}
+      sidebarProps={{
+        viewMode,
+        onViewModeChange: setViewMode,
+        isHOD,
+        canApproveGlobal,
+        isSwipeTheme: isDatingMode,
+        portalTitle,
+      }}
+      navbarProps={{
+        user,
+        isHOD,
+        isSwipeTheme: isDatingMode,
+        pageLabel,
+        isRefreshing,
+        onRefresh: () => loadData(true),
+        onLogout,
+      }}
+    >
+      <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
         {isLoading && viewMode !== 'SWIPE' ? (
              <div className="flex items-center justify-center h-64">
                  <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
@@ -682,7 +639,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
         )}
         </>
         )}
-      </main>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 };
