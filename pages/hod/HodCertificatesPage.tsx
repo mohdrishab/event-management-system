@@ -25,6 +25,13 @@ function getCertificateStatusBadge(status: CertificateStatus) {
       </span>
     );
   }
+  if (normalized === 'REVOKED') {
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200">
+        <X className="w-3 h-3 mr-1" /> Revoked
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700 border border-yellow-200">
       <Clock className="w-3 h-3 mr-1" /> Pending
@@ -34,7 +41,8 @@ function getCertificateStatusBadge(status: CertificateStatus) {
 
 export const HodCertificatesPage: React.FC = () => {
   const { user } = useHodPortal();
-  const certificatesEnabled = isCertificatesFeatureEnabled();
+  const [certificatesEnabled, setCertificatesEnabled] = useState(false);
+  const [certificatesFeatureLoading, setCertificatesFeatureLoading] = useState(true);
 
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | CertificateStatus>('all');
@@ -44,6 +52,25 @@ export const HodCertificatesPage: React.FC = () => {
   const [selectedCertificateId, setSelectedCertificateId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState('');
   const [extendDeadlineDate, setExtendDeadlineDate] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const enabled = await isCertificatesFeatureEnabled();
+        if (!cancelled) setCertificatesEnabled(enabled);
+      } catch (err) {
+        console.error('Failed to check certificates feature flag', err);
+        if (!cancelled) setCertificatesEnabled(false);
+      } finally {
+        if (!cancelled) setCertificatesFeatureLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedCertificate = useMemo(() => {
     if (!selectedCertificateId) return null;
@@ -215,6 +242,7 @@ export const HodCertificatesPage: React.FC = () => {
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
                 <option value="rejected">Rejected</option>
+                <option value="revoked">Revoked</option>
               </select>
 
               <button
@@ -375,6 +403,29 @@ export const HodCertificatesPage: React.FC = () => {
                     disabled={selectedCertificate.status !== 'pending'}
                   >
                     <X className="w-4 h-4 mr-2" /> Reject
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        await staffCertificateService.revokeCertificate({
+                          certificateId: selectedCertificate.id,
+                          staffId: user.id,
+                          staffName: user.name,
+                          staffRole: user.role,
+                          remarks: remarks || undefined,
+                        });
+                        await load();
+                        setSelectedCertificateId(null);
+                        setRemarks('');
+                      } catch (err: any) {
+                        alert(err?.message || 'Failed to revoke certificate.');
+                      }
+                    }}
+                    disabled={!(selectedCertificate.status === 'approved' || selectedCertificate.status === 'rejected')}
+                  >
+                    <X className="w-4 h-4 mr-2" /> Revoke
                   </Button>
                 </div>
               </div>

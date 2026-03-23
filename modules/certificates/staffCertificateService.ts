@@ -5,6 +5,7 @@ import type {
   CertificateView,
 } from './certificateTypes';
 import { isCertificatesFeatureEnabled, certificateService } from './certificateService';
+import { certificateRepository } from './certificateRepository';
 
 function assertStaffCanDecide(role: string | undefined) {
   if (role !== 'professor' && role !== 'hod') {
@@ -14,12 +15,12 @@ function assertStaffCanDecide(role: string | undefined) {
 
 export const staffCertificateService = {
   async getPendingCertificates(): Promise<CertificateView[]> {
-    if (!isCertificatesFeatureEnabled()) return [];
+    if (!(await isCertificatesFeatureEnabled())) return [];
     return certificateService.getAllCertificates().then(list => list.filter(c => c.status === 'pending'));
   },
 
   async approveCertificate(params: ApproveRejectCertificateInput & { staffRole?: string }): Promise<CertificateView> {
-    if (!isCertificatesFeatureEnabled()) throw new Error('Certificates feature is disabled.');
+    if (!(await isCertificatesFeatureEnabled())) throw new Error('Certificates feature is disabled.');
     assertStaffCanDecide(params.staffRole);
 
     return certificateService.approveCertificate({
@@ -31,7 +32,7 @@ export const staffCertificateService = {
   },
 
   async rejectCertificate(params: ApproveRejectCertificateInput & { staffRole?: string }): Promise<CertificateView> {
-    if (!isCertificatesFeatureEnabled()) throw new Error('Certificates feature is disabled.');
+    if (!(await isCertificatesFeatureEnabled())) throw new Error('Certificates feature is disabled.');
     assertStaffCanDecide(params.staffRole);
 
     return certificateService.rejectCertificate({
@@ -43,7 +44,7 @@ export const staffCertificateService = {
   },
 
   async extendDeadline(params: ExtendCertificateDeadlineInput & { staffRole?: string }): Promise<CertificateView> {
-    if (!isCertificatesFeatureEnabled()) throw new Error('Certificates feature is disabled.');
+    if (!(await isCertificatesFeatureEnabled())) throw new Error('Certificates feature is disabled.');
     assertStaffCanDecide(params.staffRole);
 
     const updated = await certificateRepository.extendCertificateDeadline({
@@ -57,13 +58,13 @@ export const staffCertificateService = {
   },
 
   async getCertificatesForHod(status: CertificateStatus | 'all'): Promise<CertificateView[]> {
-    if (!isCertificatesFeatureEnabled()) return [];
+    if (!(await isCertificatesFeatureEnabled())) return [];
     if (status === 'all') return certificateService.getAllCertificates();
     return certificateService.getAllCertificates().then(list => list.filter(c => c.status === status));
   },
 
   async revokeCertificate(params: ApproveRejectCertificateInput & { staffRole?: string }): Promise<CertificateView> {
-    if (!isCertificatesFeatureEnabled()) throw new Error('Certificates feature is disabled.');
+    if (!(await isCertificatesFeatureEnabled())) throw new Error('Certificates feature is disabled.');
     assertStaffCanDecide(params.staffRole);
     return certificateService.revokeCertificate({
       certificateId: params.certificateId,

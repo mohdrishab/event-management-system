@@ -24,7 +24,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
   const [faculty, setFaculty] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const certificatesEnabled = isCertificatesFeatureEnabled();
+  const [certificatesEnabled, setCertificatesEnabled] = useState(false);
+  const [certificatesFeatureLoading, setCertificatesFeatureLoading] = useState(true);
   const [certTab, setCertTab] = useState<'REQUESTS' | 'CERTIFICATES'>('REQUESTS');
   const [pendingCertificates, setPendingCertificates] = useState<CertificateView[]>([]);
   const [selectedCertificateId, setSelectedCertificateId] = useState<string | null>(null);
@@ -48,6 +49,25 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
     const date = new Date(dateString);
     return isNaN(date.getTime()) ? new Date() : date;
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const enabled = await isCertificatesFeatureEnabled();
+        if (!cancelled) setCertificatesEnabled(enabled);
+      } catch (err) {
+        console.error('Failed to check certificates feature flag', err);
+        if (!cancelled) setCertificatesEnabled(false);
+      } finally {
+        if (!cancelled) setCertificatesFeatureLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsLoading(true);
@@ -85,7 +105,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
         setIsLoading(false);
         setIsRefreshing(false);
     }
-  }, [swipeIndex]);
+  }, [swipeIndex, certificatesEnabled]);
 
   useEffect(() => {
     loadData();
@@ -309,22 +329,20 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                   </span>
                 </button>
 
-                {certificatesEnabled && (
-                  <button
-                    type="button"
-                    onClick={() => setCertTab('CERTIFICATES')}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
-                      certTab === 'CERTIFICATES'
-                        ? 'bg-orange-100 text-orange-800 shadow-sm'
-                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 border border-transparent'
-                    }`}
-                  >
-                    Certificates
-                    <span className="bg-orange-200/50 text-orange-800 px-2 py-0.5 rounded-full font-bold">
-                      {pendingCertificates.length}
-                    </span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setCertTab('CERTIFICATES')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
+                    certTab === 'CERTIFICATES'
+                      ? 'bg-orange-100 text-orange-800 shadow-sm'
+                      : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 border border-transparent'
+                  } ${!certificatesEnabled ? 'opacity-60' : ''}`}
+                >
+                  Certificates
+                  <span className="bg-orange-200/50 text-orange-800 px-2 py-0.5 rounded-full font-bold">
+                    {pendingCertificates.length}
+                  </span>
+                </button>
 
                 {!canApproveGlobal && certTab === 'REQUESTS' && (
                   <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2.5 py-1 rounded-full border border-gray-200">
@@ -459,18 +477,23 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                 </div>
             ))}
 
-            {certTab === 'CERTIFICATES' && certificatesEnabled && (
-              <div className="space-y-4 min-h-[220px]">
-                {pendingCertificates.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 shadow-sm">
-                    <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                      <Clock className="w-8 h-8 text-orange-500" />
+            {certTab === 'CERTIFICATES' && (
+              !certificatesEnabled ? (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-center text-gray-600">
+                  Module disabled
+                </div>
+              ) : (
+                <div className="space-y-4 min-h-[220px]">
+                  {pendingCertificates.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 shadow-sm">
+                      <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                        <Clock className="w-8 h-8 text-orange-500" />
+                      </div>
+                      <h3 className="text-lg font-medium text-gray-900">All caught up!</h3>
+                      <p className="text-gray-500">No pending certificates to review.</p>
                     </div>
-                    <h3 className="text-lg font-medium text-gray-900">All caught up!</h3>
-                    <p className="text-gray-500">No pending certificates to review.</p>
-                  </div>
-                ) : selectedCertificateId ? (
-                  (() => {
+                  ) : selectedCertificateId ? (
+                    (() => {
                     const selected = pendingCertificates.find(c => c.id === selectedCertificateId) || null;
                     if (!selected) {
                       return (
@@ -652,50 +675,51 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                       </div>
                     );
                   })()
-                ) : (
-                  <div className="grid gap-4">
-                    {pendingCertificates.map(cert => (
-                      <div
-                        key={cert.id}
-                        className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
-                      >
-                        <div>
-                          <div className="text-sm text-gray-500">Student</div>
-                          <div className="font-bold text-gray-900">{cert.studentName || 'Student'}</div>
-                          <div className="text-xs text-gray-500">{cert.studentUSN || ''}</div>
+                  ) : (
+                    <div className="grid gap-4">
+                      {pendingCertificates.map(cert => (
+                        <div
+                          key={cert.id}
+                          className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+                        >
+                          <div>
+                            <div className="text-sm text-gray-500">Student</div>
+                            <div className="font-bold text-gray-900">{cert.studentName || 'Student'}</div>
+                            <div className="text-xs text-gray-500">{cert.studentUSN || ''}</div>
 
-                          <div className="mt-3 text-sm text-gray-500">Event</div>
-                          <div className="font-semibold text-gray-900">{cert.eventName || cert.eventType || 'Event'}</div>
-                        </div>
-
-                        <div className="flex flex-col sm:items-end gap-2">
-                          <div className="inline-flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
-                            <Clock className="w-4 h-4 text-orange-600" />
-                            Deadline: {cert.deadline ? format(safeDate(cert.deadline), 'MMM d, yyyy') : '—'}
+                            <div className="mt-3 text-sm text-gray-500">Event</div>
+                            <div className="font-semibold text-gray-900">{cert.eventName || cert.eventType || 'Event'}</div>
                           </div>
-                          {cert.isLate && (
-                            <div className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-100 rounded-full px-3 py-1">
-                              <Clock className="w-3 h-3" /> Late upload
-                            </div>
-                          )}
 
-                          <Button
-                            onClick={() => {
-                              setSelectedCertificateId(cert.id);
-                              setCertificateRemarks('');
-                              setExtendDeadlineDate(cert.deadline ? cert.deadline.slice(0, 10) : '');
-                            }}
-                            variant="primary"
-                            size="md"
-                          >
-                            Review
-                          </Button>
+                          <div className="flex flex-col sm:items-end gap-2">
+                            <div className="inline-flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                              <Clock className="w-4 h-4 text-orange-600" />
+                              Deadline: {cert.deadline ? format(safeDate(cert.deadline), 'MMM d, yyyy') : '—'}
+                            </div>
+                            {cert.isLate && (
+                              <div className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-100 rounded-full px-3 py-1">
+                                <Clock className="w-3 h-3" /> Late upload
+                              </div>
+                            )}
+
+                            <Button
+                              onClick={() => {
+                                setSelectedCertificateId(cert.id);
+                                setCertificateRemarks('');
+                                setExtendDeadlineDate(cert.deadline ? cert.deadline.slice(0, 10) : '');
+                              }}
+                              variant="primary"
+                              size="md"
+                            >
+                              Review
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
             )}
           </div>
         )}

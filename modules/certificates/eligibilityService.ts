@@ -7,7 +7,7 @@ export const eligibilityService = {
     studentId: string;
   }): Promise<EligibilityResult> {
     // Feature flag off => do not block application submissions.
-    if (!isCertificatesFeatureEnabled()) {
+    if (!(await isCertificatesFeatureEnabled())) {
       return { eligible: true };
     }
 
@@ -31,7 +31,7 @@ export const eligibilityService = {
       return {
         eligible: false,
         reason:
-          'You must upload a certificate for your previous hackathon application(s) before applying again.',
+          'You must upload certificates for your previous approved application(s) before applying again.',
         blockingApplicationIds: missing,
       };
     }

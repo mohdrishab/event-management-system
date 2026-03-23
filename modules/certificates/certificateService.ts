@@ -11,14 +11,53 @@ import type {
 
 const CERTIFICATES_BUCKET = 'certificates';
 
-export function isCertificatesFeatureEnabled(): boolean {
+let cachedCertificatesFeatureEnabled: boolean | null = null;
+let cachedCertificatesFeatureEnabledPromise: Promise<boolean> | null = null;
+
+function parseBooleanish(val: any): boolean {
+  if (val === true || val === false) return val;
+  if (val == null) return false;
+  const s = String(val).trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes' || s === 'y';
+}
+
+function getCertificatesFeatureEnabledFromEnv(): boolean {
   const raw = import.meta.env.VITE_CERTIFICATES_FEATURE_ENABLED;
   if (raw == null || String(raw).trim() === '') return false;
-  return String(raw).toLowerCase() === 'true' || String(raw) === '1';
+  return parseBooleanish(raw);
+}
+
+async function getCertificatesFeatureEnabledFromDb(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('feature_flags')
+    .select('is_enabled')
+    .eq('feature_name', 'certificate_module')
+    .maybeSingle();
+
+  if (error) throw error;
+  return parseBooleanish(data?.is_enabled);
+}
+
+export async function isCertificatesFeatureEnabled(): Promise<boolean> {
+  if (cachedCertificatesFeatureEnabled != null) return cachedCertificatesFeatureEnabled;
+
+  if (!cachedCertificatesFeatureEnabledPromise) {
+    cachedCertificatesFeatureEnabledPromise = getCertificatesFeatureEnabledFromDb()
+      .catch(() => {
+        // Fallback to env-var behavior to avoid hard failures if DB table/column differs.
+        return getCertificatesFeatureEnabledFromEnv();
+      })
+      .finally(() => {
+        cachedCertificatesFeatureEnabledPromise = null;
+      });
+  }
+
+  cachedCertificatesFeatureEnabled = await cachedCertificatesFeatureEnabledPromise;
+  return cachedCertificatesFeatureEnabled;
 }
 
 async function assertCertificatesEnabled(): Promise<void> {
-  if (!isCertificatesFeatureEnabled()) {
+  if (!(await isCertificatesFeatureEnabled())) {
     throw new Error('Certificates feature is disabled.');
   }
 }
@@ -139,17 +178,17 @@ export const certificateService = {
   },
 
   async getStudentCertificates(studentId: string): Promise<CertificateView[]> {
-    if (!isCertificatesFeatureEnabled()) return [];
+    if (!(await isCertificatesFeatureEnabled())) return [];
     return certificateRepository.getStudentCertificates(studentId);
   },
 
   async getCertificateStatus(applicationId: string): Promise<CertificateView | null> {
-    if (!isCertificatesFeatureEnabled()) return null;
+    if (!(await isCertificatesFeatureEnabled())) return null;
     return certificateRepository.getCertificateByApplicationId(applicationId);
   },
 
   async getAllCertificates(): Promise<CertificateView[]> {
-    if (!isCertificatesFeatureEnabled()) return [];
+    if (!(await isCertificatesFeatureEnabled())) return [];
     return certificateRepository.getCertificatesForHod('all');
   },
 

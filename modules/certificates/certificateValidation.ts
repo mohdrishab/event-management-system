@@ -43,11 +43,6 @@ export const certificateValidation = {
     }
 
     const eventType = app.event_type != null ? String(app.event_type) : null;
-    const requiresCertificate = (eventType || '').toLowerCase().includes('hackathon');
-    if (!requiresCertificate) {
-      throw new Error('This event does not require a certificate.');
-    }
-
     return {
       eventId: app.event_id != null ? String(app.event_id) : null,
       eventType,
