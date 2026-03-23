@@ -14,6 +14,7 @@ import { HodStaffPage } from './pages/hod/HodStaffPage';
 import { HodReportsPage } from './pages/hod/HodReportsPage';
 import { HodNotificationsPage } from './pages/hod/HodNotificationsPage';
 import { HodSettingsPage } from './pages/hod/HodSettingsPage';
+import { HodCertificatesPage } from './pages/hod/HodCertificatesPage';
 import { User } from './types';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
@@ -128,6 +129,7 @@ function AppRoutes() {
         <Route path="students" element={<HodStudentsPage />} />
         <Route path="students/:studentId" element={<HodStudentProfilePage />} />
         <Route path="staff" element={<HodStaffPage />} />
+        <Route path="certificates" element={<HodCertificatesPage />} />
         <Route path="reports" element={<HodReportsPage />} />
         <Route path="notifications" element={<HodNotificationsPage />} />
         <Route path="settings" element={<HodSettingsPage />} />

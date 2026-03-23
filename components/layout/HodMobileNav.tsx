@@ -1,12 +1,13 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Inbox, GraduationCap, Users, BarChart3, Bell, Settings } from 'lucide-react';
+import { LayoutDashboard, Inbox, GraduationCap, Users, BarChart3, Bell, Settings, FileText } from 'lucide-react';
 
 const items: { to: string; label: string; icon: React.ReactNode }[] = [
   { to: '.', label: 'Home', icon: <LayoutDashboard className="h-5 w-5" /> },
   { to: 'requests', label: 'Req', icon: <Inbox className="h-5 w-5" /> },
   { to: 'students', label: 'Stud', icon: <GraduationCap className="h-5 w-5" /> },
   { to: 'staff', label: 'Staff', icon: <Users className="h-5 w-5" /> },
+  { to: 'certificates', label: 'Certs', icon: <FileText className="h-5 w-5" /> },
   { to: 'reports', label: 'Rep', icon: <BarChart3 className="h-5 w-5" /> },
   { to: 'notifications', label: 'Bell', icon: <Bell className="h-5 w-5" /> },
   { to: 'settings', label: 'Set', icon: <Settings className="h-5 w-5" /> },

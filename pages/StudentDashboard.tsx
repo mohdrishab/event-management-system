@@ -5,6 +5,9 @@ import { generateLeaveReason, improveWriting, makeProfessional, shortenText } fr
 import { Button } from '../components/Button';
 import { Calendar, Clock, CheckCircle, XCircle, Sparkles, LogOut, ArrowRight, BarChart3, Hourglass, CalendarDays, Camera, X, ZoomIn, ZoomOut, Move, Loader2, Bell, FileText, Compass, User as UserIcon, Award, MapPin, Building, ChevronDown, Wand2, Edit3, Trash2 } from 'lucide-react';
 import { format, differenceInDays, isFuture } from 'date-fns';
+import { certificateService, isCertificatesFeatureEnabled } from '../modules/certificates/certificateService';
+import { eligibilityService } from '../modules/certificates/eligibilityService';
+import type { CertificateView } from '../modules/certificates/certificateTypes';
 
 interface StudentDashboardProps {
   user: User;
@@ -204,15 +207,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
   // UI State
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'EXPLORE' | 'PROFILE'>('DASHBOARD');
   const [showAiMenu, setShowAiMenu] = useState(false);
+  const certificatesEnabled = isCertificatesFeatureEnabled();
+
+  const [certificates, setCertificates] = useState<CertificateView[]>([]);
+  const [certificatesLoading, setCertificatesLoading] = useState(false);
+  const [uploadingCertificateForAppId, setUploadingCertificateForAppId] = useState<string | null>(null);
 
   useEffect(() => {
     loadApplications();
   }, [user.id]);
 
+  const loadCertificates = async () => {
+    if (!certificatesEnabled) return;
+    setCertificatesLoading(true);
+    try {
+      const list = await certificateService.getStudentCertificates(user.id);
+      setCertificates(list);
+    } catch (error) {
+      console.error('Failed to load certificates', error);
+    } finally {
+      setCertificatesLoading(false);
+    }
+  };
+
   const loadApplications = async () => {
     try {
       const myApps = await storageService.getStudentApplications(user.id);
       setApplications(myApps);
+      await loadCertificates();
     } catch (error) {
       console.error("Failed to load applications", error);
     }
@@ -264,6 +286,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
         return;
     }
     
+    if (certificatesEnabled) {
+      try {
+        const eligibility = await eligibilityService.checkStudentEligibilityForNewEvent({
+          studentId: user.id,
+        });
+        if (!eligibility.eligible) {
+          alert(eligibility.reason || 'You are not eligible to apply for this event.');
+          return;
+        }
+      } catch (err: any) {
+        console.error('Eligibility check failed', err);
+        alert(err?.message || 'Failed to check eligibility for this event.');
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -305,6 +343,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
       }
     }
   };
+
+  const handleCertificateUpload = async (applicationId: string, file: File) => {
+    if (!certificatesEnabled) return;
+    setUploadingCertificateForAppId(applicationId);
+    try {
+      const existing = certificates.find(c => c.applicationId === applicationId) || null;
+
+      if (existing?.status === 'approved' && !existing.fileMissing) {
+        throw new Error('This application already has an approved certificate.');
+      }
+
+      if (existing?.status === 'rejected') {
+        await certificateService.reuploadCertificate({ studentId: user.id, applicationId, file });
+      } else {
+        // For missing / pending certificates, upload will upsert/overwrite to `pending`.
+        await certificateService.uploadCertificate({ studentId: user.id, applicationId, file });
+      }
+
+      await loadCertificates();
+      alert('Certificate uploaded successfully.');
+    } catch (err: any) {
+      console.error('Certificate upload failed', err);
+      alert(err?.message || 'Failed to upload certificate.');
+    } finally {
+      setUploadingCertificateForAppId(null);
+    }
+  };
+
   const handleProfileSave = async (base64Image: string) => {
       const updatedUser = { ...user, profilePic: base64Image };
       try {
@@ -325,6 +391,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
     }
   };
 
+  const getCertificateStatusBadge = (status?: string) => {
+    switch (String(status || '').toUpperCase()) {
+      case 'APPROVED':
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 border border-green-200">
+            <CheckCircle className="w-3 h-3 mr-1" /> Approved
+          </span>
+        );
+      case 'REJECTED':
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200">
+            <XCircle className="w-3 h-3 mr-1" /> Rejected
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700 border border-yellow-200">
+            <Hourglass className="w-3 h-3 mr-1" /> Pending
+          </span>
+        );
+    }
+  };
+
+  const requiresCertificateForEvent = (eventType?: string | null) => {
+    if (!certificatesEnabled) return false;
+    return String(eventType || '').toLowerCase().includes('hackathon');
+  };
+
   const getDuration = () => {
     if (!startDate || !endDate) return null;
     const start = safeDate(startDate);
@@ -337,6 +431,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
   const filteredApplications = useMemo(() => applications.filter(app => 
     filterStatus === 'ALL' || app.status?.toUpperCase() === filterStatus.toUpperCase()
   ), [applications, filterStatus]);
+
+  const certificateByAppId = useMemo(() => {
+    return new Map<string, CertificateView>(certificates.map(c => [c.applicationId, c]));
+  }, [certificates]);
 
   const stats = useMemo(() => ({
     total: applications.length,
@@ -579,6 +677,119 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                               <p className="text-gray-600 text-sm line-clamp-2 bg-gray-50 p-3 rounded-xl border border-gray-100/50">
                                 {app.reason}
                               </p>
+
+                              {requiresCertificateForEvent(app.eventType) && (
+                                <div className="mt-4 p-4 rounded-xl border border-orange-100 bg-orange-50/30">
+                                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div className="flex items-center gap-2">
+                                      <Award className="w-4 h-4 text-orange-600" />
+                                      <h4 className="font-semibold text-gray-900">Certificate Status</h4>
+                                    </div>
+                                    {certificateByAppId.get(app.id) ? (
+                                      getCertificateStatusBadge(certificateByAppId.get(app.id)?.status)
+                                    ) : (
+                                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200">
+                                        Not uploaded
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <div className="text-xs text-gray-600">
+                                      <span className="font-semibold text-gray-700">Deadline: </span>
+                                      <span>{format(safeDate(app.endDate), 'MMM d, yyyy')}</span>
+                                    </div>
+                                    <div className="text-xs text-gray-600">
+                                      {certificateByAppId.get(app.id)?.isLate ? (
+                                        <span className="inline-flex items-center gap-1 font-semibold text-red-700 bg-red-50 border border-red-100 px-2 py-1 rounded-full">
+                                          <Clock className="w-3 h-3" /> Late upload
+                                        </span>
+                                      ) : (
+                                        <span className="font-semibold text-gray-700">On time / Not late</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {certificateByAppId.get(app.id)?.signedUrl && !certificateByAppId.get(app.id)?.fileMissing && (
+                                    <div className="mt-3">
+                                      <a
+                                        href={certificateByAppId.get(app.id)?.signedUrl || '#'}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-2 text-xs font-semibold text-orange-700 hover:text-orange-800"
+                                      >
+                                        <FileText className="w-4 h-4" /> View certificate (PDF)
+                                      </a>
+                                    </div>
+                                  )}
+
+                                  {certificateByAppId.get(app.id)?.fileMissing && (
+                                    <div className="mt-3 text-xs text-red-700 font-medium">
+                                      File not found in storage. Please re-upload.
+                                    </div>
+                                  )}
+
+                                  {certificateByAppId.get(app.id)?.remarks && (
+                                    <div className="mt-3 text-xs text-gray-700">
+                                      <span className="font-semibold">Staff remarks: </span>
+                                      {certificateByAppId.get(app.id)?.remarks}
+                                    </div>
+                                  )}
+
+                                  <div className="mt-4">
+                                    {(() => {
+                                      const cert = certificateByAppId.get(app.id);
+                                      const busy = uploadingCertificateForAppId === app.id;
+
+                                      if (!cert) {
+                                        return (
+                                          <>
+                                            <label className="block text-xs font-semibold text-gray-700 mb-2">Upload certificate PDF</label>
+                                            <input
+                                              type="file"
+                                              accept="application/pdf"
+                                              className="block w-full text-xs text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"
+                                              disabled={busy || isSubmitting || isGenerating}
+                                              onChange={(e) => {
+                                                const f = e.target.files?.[0];
+                                                if (f) handleCertificateUpload(app.id, f);
+                                              }}
+                                            />
+                                          </>
+                                        );
+                                      }
+
+                                      if (cert.status === 'pending' && !cert.fileMissing) {
+                                        return (
+                                          <div className="text-xs text-gray-600">
+                                            Certificate uploaded and pending review. Re-upload is available only after rejection.
+                                          </div>
+                                        );
+                                      }
+
+                                      if (cert.status === 'rejected' || cert.fileMissing) {
+                                        return (
+                                          <>
+                                            <label className="block text-xs font-semibold text-gray-700 mb-2">Re-upload (overwrites previous file)</label>
+                                            <input
+                                              type="file"
+                                              accept="application/pdf"
+                                              className="block w-full text-xs text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"
+                                              disabled={busy || isSubmitting || isGenerating}
+                                              onChange={(e) => {
+                                                const f = e.target.files?.[0];
+                                                if (f) handleCertificateUpload(app.id, f);
+                                              }}
+                                            />
+                                          </>
+                                        );
+                                      }
+
+                                      return <div className="text-xs text-gray-600">Certificate approved. Re-upload not required.</div>;
+                                    })()}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                             
                             {/* Actions Column */}

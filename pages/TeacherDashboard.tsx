@@ -4,8 +4,11 @@ import { User, LeaveApplication } from '../types';
 import { storageService } from '../services/storageService';
 import { Button } from '../components/Button';
 import { DashboardLayout } from '../components/layout';
-import { Check, X, Undo2, Heart, Calendar, GraduationCap, ArrowRight, Search, Clock, Loader2, Star, Users, UserCog, ChevronDown } from 'lucide-react';
+import { Check, X, Undo2, Heart, Calendar, GraduationCap, ArrowRight, Search, Clock, Loader2, Star, Users, UserCog, ChevronDown, FileText } from 'lucide-react';
 import { format } from 'date-fns';
+import { staffCertificateService } from '../modules/certificates/staffCertificateService';
+import { isCertificatesFeatureEnabled } from '../modules/certificates/certificateService';
+import type { CertificateView } from '../modules/certificates/certificateTypes';
 
 interface TeacherDashboardProps {
   user: User;
@@ -21,6 +24,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
   const [faculty, setFaculty] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const certificatesEnabled = isCertificatesFeatureEnabled();
+  const [certTab, setCertTab] = useState<'REQUESTS' | 'CERTIFICATES'>('REQUESTS');
+  const [pendingCertificates, setPendingCertificates] = useState<CertificateView[]>([]);
+  const [selectedCertificateId, setSelectedCertificateId] = useState<string | null>(null);
+  const [certificateRemarks, setCertificateRemarks] = useState('');
+  const [extendDeadlineDate, setExtendDeadlineDate] = useState('');
+  const [certActionBusy, setCertActionBusy] = useState(false);
   
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [swipeIndex, setSwipeIndex] = useState(0);
@@ -61,6 +71,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
 
         const staff = await storageService.getFaculty();
         setFaculty(staff);
+
+        if (certificatesEnabled) {
+          const pendingCerts = await staffCertificateService.getPendingCertificates();
+          setPendingCertificates(pendingCerts);
+        } else {
+          setPendingCertificates([]);
+        }
 
     } catch (error) {
         console.error("Failed to load data", error);
@@ -228,46 +245,96 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
         {viewMode === 'TRADITIONAL' && (
           <div className="space-y-6 animate-fade-in min-h-[500px]">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-               <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+              {certTab === 'CERTIFICATES' ? (
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 md:col-span-3">
                   <div className="w-12 h-12 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center">
-                     <Clock className="w-6 h-6" />
+                    <Clock className="w-6 h-6" />
                   </div>
                   <div>
-                     <p className="text-sm text-gray-500 font-medium">Pending Review</p>
-                     <p className="text-2xl font-bold text-gray-900">{stats.pending}</p>
+                    <p className="text-sm text-gray-500 font-medium">Pending Certificates</p>
+                    <p className="text-2xl font-bold text-gray-900">{pendingCertificates.length}</p>
                   </div>
-               </div>
-               <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center">
-                     <Check className="w-6 h-6" />
+                </div>
+              ) : (
+                <>
+                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center">
+                      <Clock className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500 font-medium">Pending Review</p>
+                      <p className="text-2xl font-bold text-gray-900">{stats.pending}</p>
+                    </div>
                   </div>
-                  <div>
-                     <p className="text-sm text-gray-500 font-medium">Approved</p>
-                     <p className="text-2xl font-bold text-gray-900">{stats.approved}</p>
+                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center">
+                      <Check className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500 font-medium">Approved</p>
+                      <p className="text-2xl font-bold text-gray-900">{stats.approved}</p>
+                    </div>
                   </div>
-               </div>
-               <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
-                     <X className="w-6 h-6" />
+                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
+                      <X className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500 font-medium">Rejected</p>
+                      <p className="text-2xl font-bold text-gray-900">{stats.rejected}</p>
+                    </div>
                   </div>
-                  <div>
-                     <p className="text-sm text-gray-500 font-medium">Rejected</p>
-                     <p className="text-2xl font-bold text-gray-900">{stats.rejected}</p>
-                  </div>
-               </div>
+                </>
+              )}
             </div>
 
-            <div className="flex items-center justify-between mb-2 pt-2">
-                <h2 className="text-2xl font-bold text-gray-800">Pending Requests</h2>
-                <div className="flex gap-2">
-                    <span className="bg-orange-100 text-orange-800 text-xs font-bold px-2.5 py-1 rounded-full">{pendingApps.length} New</span>
-                    {!canApproveGlobal && (
-                        <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2.5 py-1 rounded-full border border-gray-200">View Only</span>
-                    )}
-                </div>
+            <div className="flex items-center justify-between mb-2 pt-2 gap-4">
+              <h2 className="text-2xl font-bold text-gray-800">
+                {certTab === 'CERTIFICATES' ? 'Pending Certificates' : 'Pending Requests'}
+              </h2>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCertTab('REQUESTS')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
+                    certTab === 'REQUESTS'
+                      ? 'bg-orange-100 text-orange-800 shadow-sm'
+                      : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 border border-transparent'
+                  }`}
+                >
+                  Requests
+                  <span className="bg-orange-200/50 text-orange-800 px-2 py-0.5 rounded-full font-bold">
+                    {pendingApps.length}
+                  </span>
+                </button>
+
+                {certificatesEnabled && (
+                  <button
+                    type="button"
+                    onClick={() => setCertTab('CERTIFICATES')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
+                      certTab === 'CERTIFICATES'
+                        ? 'bg-orange-100 text-orange-800 shadow-sm'
+                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 border border-transparent'
+                    }`}
+                  >
+                    Certificates
+                    <span className="bg-orange-200/50 text-orange-800 px-2 py-0.5 rounded-full font-bold">
+                      {pendingCertificates.length}
+                    </span>
+                  </button>
+                )}
+
+                {!canApproveGlobal && certTab === 'REQUESTS' && (
+                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2.5 py-1 rounded-full border border-gray-200">
+                    View Only
+                  </span>
+                )}
+              </div>
             </div>
             
-            {pendingApps.length === 0 ? (
+            {certTab === 'REQUESTS' && (pendingApps.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 shadow-sm">
                     <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
                         <Check className="w-8 h-8 text-green-500" />
@@ -390,6 +457,245 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogo
                     </div>
                 )})}
                 </div>
+            ))}
+
+            {certTab === 'CERTIFICATES' && certificatesEnabled && (
+              <div className="space-y-4 min-h-[220px]">
+                {pendingCertificates.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 shadow-sm">
+                    <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                      <Clock className="w-8 h-8 text-orange-500" />
+                    </div>
+                    <h3 className="text-lg font-medium text-gray-900">All caught up!</h3>
+                    <p className="text-gray-500">No pending certificates to review.</p>
+                  </div>
+                ) : selectedCertificateId ? (
+                  (() => {
+                    const selected = pendingCertificates.find(c => c.id === selectedCertificateId) || null;
+                    if (!selected) {
+                      return (
+                        <div className="flex items-center justify-between bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">Certificate no longer pending</h3>
+                            <p className="text-sm text-gray-500 mt-1">Returning to the pending list.</p>
+                          </div>
+                          <Button onClick={() => { setSelectedCertificateId(null); setCertificateRemarks(''); setExtendDeadlineDate(''); }} variant="outline">
+                            Back
+                          </Button>
+                        </div>
+                      );
+                    }
+
+                    const deadlineDateOnly =
+                      selected.deadline && selected.deadline.length >= 10 ? selected.deadline.slice(0, 10) : '';
+
+                    return (
+                      <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-gray-100">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                          <div>
+                            <h3 className="text-xl font-bold text-gray-900">Certificate Review</h3>
+                            <div className="mt-2 text-sm text-gray-700">
+                              <div className="font-semibold">{selected.studentName || 'Student'}</div>
+                              <div className="text-gray-500">{selected.studentUSN || ''}</div>
+                            </div>
+                            <div className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                              <Clock className="w-4 h-4 text-orange-600" />
+                              Deadline: {selected.deadline ? format(safeDate(selected.deadline), 'MMM d, yyyy') : '—'}
+                            </div>
+                            {selected.isLate && (
+                              <div className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-100 rounded-full px-3 py-1">
+                                <Clock className="w-3 h-3" /> Late upload
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex flex-col gap-2 sm:items-end">
+                            {selected.signedUrl && !selected.fileMissing ? (
+                              <a
+                                href={selected.signedUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 text-xs font-semibold text-orange-700 hover:text-orange-800"
+                              >
+                                <FileText className="w-4 h-4" /> View PDF
+                              </a>
+                            ) : (
+                              <div className="text-xs text-red-700 font-medium">
+                                File missing in storage. Ask student to re-upload after rejection.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                            <h4 className="text-sm font-bold text-gray-900">Event</h4>
+                            <div className="mt-2 text-sm text-gray-700 font-semibold">{selected.eventName || selected.eventType || 'Event'}</div>
+                            {selected.startDate && selected.endDate && (
+                              <div className="mt-1 text-xs text-gray-500">
+                                {format(safeDate(selected.startDate), 'MMM d')} - {format(safeDate(selected.endDate), 'MMM d, yyyy')}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                            <h4 className="text-sm font-bold text-gray-900">Remarks</h4>
+                            <textarea
+                              value={certificateRemarks}
+                              onChange={(e) => setCertificateRemarks(e.target.value)}
+                              className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 resize-none"
+                              placeholder="Add remarks (optional)…"
+                              rows={4}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-end sm:justify-between">
+                          <div className="flex items-center gap-3">
+                            <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                Extend deadline
+                              </label>
+                              <input
+                                type="date"
+                                className="w-full sm:w-[180px] px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                                value={extendDeadlineDate || deadlineDateOnly}
+                                onChange={(e) => setExtendDeadlineDate(e.target.value)}
+                              />
+                            </div>
+                            <Button
+                              onClick={async () => {
+                                const dateStr = extendDeadlineDate || deadlineDateOnly;
+                                if (!dateStr) return;
+                                setCertActionBusy(true);
+                                try {
+                                  const newDeadlineIso = new Date(`${dateStr}T23:59:59.999Z`).toISOString();
+                                  await staffCertificateService.extendDeadline({
+                                    certificateId: selected.id,
+                                    staffId: user.id,
+                                    staffRole: user.role,
+                                    newDeadline: newDeadlineIso,
+                                  });
+                                  await loadData(true);
+                                  setSelectedCertificateId(null);
+                                  setCertificateRemarks('');
+                                  setExtendDeadlineDate('');
+                                } catch (err: any) {
+                                  alert(err?.message || 'Failed to extend deadline.');
+                                } finally {
+                                  setCertActionBusy(false);
+                                }
+                              }}
+                              disabled={certActionBusy}
+                              variant="outline"
+                            >
+                              Extend
+                            </Button>
+                          </div>
+
+                          <div className="flex gap-3 sm:justify-end">
+                            <Button
+                              onClick={async () => {
+                                setCertActionBusy(true);
+                                try {
+                                  await staffCertificateService.approveCertificate({
+                                    certificateId: selected.id,
+                                    staffId: user.id,
+                                    staffName: user.name,
+                                    staffRole: user.role,
+                                    remarks: certificateRemarks || undefined,
+                                  });
+                                  await loadData(true);
+                                  setSelectedCertificateId(null);
+                                  setCertificateRemarks('');
+                                  setExtendDeadlineDate('');
+                                } catch (err: any) {
+                                  alert(err?.message || 'Failed to approve certificate.');
+                                } finally {
+                                  setCertActionBusy(false);
+                                }
+                              }}
+                              disabled={certActionBusy}
+                              className="shadow-sm"
+                            >
+                              <Check className="w-4 h-4 mr-2" /> Approve
+                            </Button>
+
+                            <Button
+                              onClick={async () => {
+                                setCertActionBusy(true);
+                                try {
+                                  await staffCertificateService.rejectCertificate({
+                                    certificateId: selected.id,
+                                    staffId: user.id,
+                                    staffName: user.name,
+                                    staffRole: user.role,
+                                    remarks: certificateRemarks || undefined,
+                                  });
+                                  await loadData(true);
+                                  setSelectedCertificateId(null);
+                                  setCertificateRemarks('');
+                                  setExtendDeadlineDate('');
+                                } catch (err: any) {
+                                  alert(err?.message || 'Failed to reject certificate.');
+                                } finally {
+                                  setCertActionBusy(false);
+                                }
+                              }}
+                              disabled={certActionBusy}
+                              variant="danger"
+                            >
+                              <X className="w-4 h-4 mr-2" /> Reject
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <div className="grid gap-4">
+                    {pendingCertificates.map(cert => (
+                      <div
+                        key={cert.id}
+                        className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+                      >
+                        <div>
+                          <div className="text-sm text-gray-500">Student</div>
+                          <div className="font-bold text-gray-900">{cert.studentName || 'Student'}</div>
+                          <div className="text-xs text-gray-500">{cert.studentUSN || ''}</div>
+
+                          <div className="mt-3 text-sm text-gray-500">Event</div>
+                          <div className="font-semibold text-gray-900">{cert.eventName || cert.eventType || 'Event'}</div>
+                        </div>
+
+                        <div className="flex flex-col sm:items-end gap-2">
+                          <div className="inline-flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                            <Clock className="w-4 h-4 text-orange-600" />
+                            Deadline: {cert.deadline ? format(safeDate(cert.deadline), 'MMM d, yyyy') : '—'}
+                          </div>
+                          {cert.isLate && (
+                            <div className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-100 rounded-full px-3 py-1">
+                              <Clock className="w-3 h-3" /> Late upload
+                            </div>
+                          )}
+
+                          <Button
+                            onClick={() => {
+                              setSelectedCertificateId(cert.id);
+                              setCertificateRemarks('');
+                              setExtendDeadlineDate(cert.deadline ? cert.deadline.slice(0, 10) : '');
+                            }}
+                            variant="primary"
+                            size="md"
+                          >
+                            Review
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

@@ -8,6 +8,7 @@ import {
   BarChart3,
   Bell,
   Settings,
+  FileText,
 } from 'lucide-react';
 
 const navItemBase =
@@ -18,6 +19,7 @@ const items: { to: string; label: string; icon: React.ReactNode }[] = [
   { to: 'requests', label: 'Requests', icon: <Inbox className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} /> },
   { to: 'students', label: 'Students', icon: <GraduationCap className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} /> },
   { to: 'staff', label: 'Staff', icon: <Users className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} /> },
+  { to: 'certificates', label: 'Certificates', icon: <FileText className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} /> },
   { to: 'reports', label: 'Reports', icon: <BarChart3 className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} /> },
   { to: 'notifications', label: 'Notifications', icon: <Bell className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} /> },
   { to: 'settings', label: 'Settings', icon: <Settings className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} /> },

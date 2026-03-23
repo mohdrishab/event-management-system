@@ -24,6 +24,7 @@ function pageLabel(pathname: string): string {
     '/hod-dashboard/requests': 'Requests',
     '/hod-dashboard/students': 'Students',
     '/hod-dashboard/staff': 'Staff',
+    '/hod-dashboard/certificates': 'Certificates',
     '/hod-dashboard/reports': 'Reports & analytics',
     '/hod-dashboard/notifications': 'Notifications',
     '/hod-dashboard/settings': 'Settings',
