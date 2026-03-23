@@ -1,0 +1,5 @@
+id,name,username,password,role,department,created_at,is_active
+42a30a10-627b-48e4-b254-ecd8a254951c,Dr Afeefa Nazneen,afeefa,staff123,professor,CSE-ICSB,2026-03-15 19:18:49.810621,true
+812efc60-deaf-4920-902a-bb3634deef9b,Dr Shamna N V,shamna,admin123,hod,CSE-ICSB,2026-03-15 19:18:49.810621,true
+b7b3b93a-48a0-4df3-9314-0f13be6a52e4,Dr Thofa Aysha,thofa,staff123,professor,CSE-ICSB,2026-03-15 19:18:49.810621,true
+e4ac98a1-e873-448a-9230-03caef52355d,Dr Mohammed Arshad,arshad,staff123,professor,CSE-ICSB,2026-03-15 19:18:49.810621,true

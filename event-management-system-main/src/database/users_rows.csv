@@ -1,0 +1,3 @@
+uid,email,name,role,department,created_at
+3dcdb06e-352e-41f1-8952-fbd4474d69fb,dummy@staff.com,,staff,,2026-03-23 17:47:13.383945+00
+44e55d64-714a-4752-9d07-2d58d520f528,dummy@student.com,,student,,2026-03-23 17:47:05.237007+00
