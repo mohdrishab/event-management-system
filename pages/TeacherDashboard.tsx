@@ -1,10 +1,10 @@
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { User, LeaveApplication } from '../types';
 import { storageService } from '../services/storageService';
 import { Button } from '../components/Button';
 import { DashboardLayout } from '../components/layout';
-import { Check, X, Undo2, Heart, Calendar, GraduationCap, ArrowRight, Search, Clock, Loader2, Star, Users, UserCog, ChevronDown, FileText } from 'lucide-react';
+import { Check, X, Loader2, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import { staffCertificateService } from '../modules/certificates/staffCertificateService';
 import { isCertificatesFeatureEnabled } from '../modules/certificates/certificateService';
@@ -15,959 +15,127 @@ interface TeacherDashboardProps {
   onLogout: () => void;
 }
 
-type ViewMode = 'TRADITIONAL' | 'SWIPE' | 'HISTORY' | 'STAFF';
+type ViewMode = 'TRADITIONAL';
 
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onLogout }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>('TRADITIONAL');
+  const [viewMode] = useState<ViewMode>('TRADITIONAL');
   const [applications, setApplications] = useState<LeaveApplication[]>([]);
-  const [pendingApps, setPendingApps] = useState<LeaveApplication[]>([]);
-  const [faculty, setFaculty] = useState<User[]>([]);
+  const [pendingCertificates, setPendingCertificates] = useState<CertificateView[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [certificatesEnabled, setCertificatesEnabled] = useState(false);
-  const [certificatesFeatureLoading, setCertificatesFeatureLoading] = useState(true);
-  const [certTab, setCertTab] = useState<'REQUESTS' | 'CERTIFICATES'>('REQUESTS');
-  const [pendingCertificates, setPendingCertificates] = useState<CertificateView[]>([]);
-  const [selectedCertificateId, setSelectedCertificateId] = useState<string | null>(null);
-  const [certificateRemarks, setCertificateRemarks] = useState('');
-  const [extendDeadlineDate, setExtendDeadlineDate] = useState('');
-  const [certActionBusy, setCertActionBusy] = useState(false);
-  
-  const [historySearchTerm, setHistorySearchTerm] = useState('');
-  const [swipeIndex, setSwipeIndex] = useState(0);
-  const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | null>(null);
-  
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef<{ x: number, y: number } | null>(null);
 
-  const canApproveGlobal = true; // All staff can approve now
   const isHOD = user.role === 'hod';
 
-  const safeDate = (dateString: string | undefined) => {
+  const safeDate = (dateString: string | undefined | null) => {
     if (!dateString) return new Date();
     const date = new Date(dateString);
     return isNaN(date.getTime()) ? new Date() : date;
   };
 
+  const loadData = async (silent = false) => {
+    if (!silent) setIsLoading(true);
+    else setIsRefreshing(true);
+    try {
+      const all = await storageService.getApplications();
+      setApplications(all);
+      if (certificatesEnabled) {
+        const certs = await staffCertificateService.getPendingCertificates();
+        setPendingCertificates(certs);
+      } else {
+        setPendingCertificates([]);
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const enabled = await isCertificatesFeatureEnabled();
-        if (!cancelled) setCertificatesEnabled(enabled);
-      } catch (err) {
-        console.error('Failed to check certificates feature flag', err);
-        if (!cancelled) setCertificatesEnabled(false);
-      } finally {
-        if (!cancelled) setCertificatesFeatureLoading(false);
-      }
+      const enabled = await isCertificatesFeatureEnabled().catch(() => false);
+      if (!cancelled) setCertificatesEnabled(enabled);
     })();
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const loadData = useCallback(async (isSilent = false) => {
-    if (!isSilent) setIsLoading(true);
-    else setIsRefreshing(true);
-    
-    try {
-        const all = await storageService.getApplications();
-        const sorted = all.sort((a, b) => {
-            if (a.isPriority && !b.isPriority) return -1;
-            if (!a.isPriority && b.isPriority) return 1;
-            return safeDate(b.timestamp).getTime() - safeDate(a.timestamp).getTime();
-        });
-        
-        setApplications(sorted);
-        // Resilient filtering (case-insensitive)
-        const pending = sorted.filter(a => a.status?.toUpperCase() === 'PENDING');
-        setPendingApps(pending);
-        
-        // Ensure swipe index doesn't go out of bounds after refresh
-        if (swipeIndex >= pending.length) setSwipeIndex(0);
-
-        const staff = await storageService.getFaculty();
-        setFaculty(staff);
-
-        if (certificatesEnabled) {
-          const pendingCerts = await staffCertificateService.getPendingCertificates();
-          setPendingCertificates(pendingCerts);
-        } else {
-          setPendingCertificates([]);
-        }
-
-    } catch (error) {
-        console.error("Failed to load data", error);
-    } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
-    }
-  }, [swipeIndex, certificatesEnabled]);
-
   useEffect(() => {
-    loadData();
-    
-    // Set up auto-refresh every 10 seconds to catch new student submissions
-    const intervalId = setInterval(() => {
-        loadData(true);
-    }, 10000);
+    void loadData();
+  }, [certificatesEnabled]);
 
-    return () => clearInterval(intervalId);
-  }, [loadData]);
+  const pendingApps = useMemo(
+    () => applications.filter(a => String(a.status || '').toLowerCase() === 'pending'),
+    [applications]
+  );
 
-  const handleDecision = async (appId: string, status: 'APPROVED' | 'REJECTED') => {
-    try {
-        await storageService.updateApplicationStatus(appId, status.toLowerCase() as any, user.id, user.name);
-        // Refresh data immediately
-        loadData(true);
-    } catch (err) {
-        console.error("Decision failed", err);
-    }
+  const handleDecision = async (appId: string, status: 'approved' | 'rejected') => {
+    await storageService.updateApplicationStatus(appId, status, user.id, user.name);
+    await loadData(true);
   };
-
-  const handleTogglePriority = async (appId: string, currentPriority: boolean) => {
-      try {
-          await storageService.togglePriority(appId, !currentPriority);
-          loadData(true);
-      } catch (err) {
-          console.error(err);
-      }
-  };
-
-  const handleAssignTeacher = async (appId: string, teacherId: string) => {
-      if (!isHOD) return;
-      try {
-          await storageService.assignApplication(appId, teacherId === 'unassigned' ? null : teacherId);
-          loadData(true);
-      } catch (err) {
-          console.error(err);
-      }
-  };
-
-  const handlePermissionToggle = async (staffId: string, currentVal: boolean) => {
-      if (!isHOD) return;
-      try {
-          await storageService.updateFacultyPermission(staffId, !currentVal);
-          setFaculty(prev => prev.map(u => u.id === staffId ? { ...u, canApprove: !currentVal } : u));
-      } catch (err) {
-          console.error(err);
-      }
-  };
-
-  const handleSwipe = (direction: 'left' | 'right') => {
-    if (swipeIndex >= pendingApps.length) return;
-    
-    setSwipeDirection(direction);
-    const app = pendingApps[swipeIndex];
-    
-    setTimeout(async () => {
-        await handleDecision(app.id, direction === 'right' ? 'APPROVED' : 'REJECTED');
-        setSwipeDirection(null);
-        setDragOffset({ x: 0, y: 0 });
-    }, 300);
-  };
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (swipeDirection) return;
-    if (e.button !== 0) return;
-    setIsDragging(true);
-    dragStartRef.current = { x: e.clientX, y: e.clientY };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging || !dragStartRef.current) return;
-    e.preventDefault();
-    const x = e.clientX - dragStartRef.current.x;
-    const y = e.clientY - dragStartRef.current.y;
-    setDragOffset({ x, y });
-  };
-
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (!isDragging) return;
-    setIsDragging(false);
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    dragStartRef.current = null;
-
-    const threshold = 100;
-    if (dragOffset.x > threshold) handleSwipe('right');
-    else if (dragOffset.x < -threshold) handleSwipe('left');
-    else setDragOffset({ x: 0, y: 0 });
-  };
-
-  const handleRevoke = async (appId: string) => {
-    await storageService.updateApplicationStatus(appId, 'pending');
-    loadData(true);
-  };
-
-  const historyApps = useMemo(() => {
-    return applications.filter(app => {
-        if (app.status?.toUpperCase() === 'PENDING') return false;
-        if (!historySearchTerm) return true;
-        const term = historySearchTerm.toLowerCase();
-        return (
-            (app.studentName || '').toLowerCase().includes(term) ||
-            (app.studentUSN || '').toLowerCase().includes(term) ||
-            (app.eventName || '').toLowerCase().includes(term)
-        );
-    });
-  }, [applications, historySearchTerm]);
-
-  const stats = useMemo(() => ({
-    pending: pendingApps.length,
-    approved: applications.filter(a => a.status?.toUpperCase() === 'APPROVED').length,
-    rejected: applications.filter(a => a.status?.toUpperCase() === 'REJECTED').length
-  }), [pendingApps.length, applications]);
-
-  const isDatingMode = viewMode === 'SWIPE';
-
-  const portalTitle = isDatingMode ? 'Faculty Match' : isHOD ? 'HOD Portal' : 'Faculty Portal';
-  const pageLabel =
-    viewMode === 'TRADITIONAL'
-      ? 'Pending requests'
-      : viewMode === 'SWIPE'
-        ? 'Swipe review'
-        : viewMode === 'HISTORY'
-          ? 'Decision history'
-          : 'Faculty management';
 
   return (
     <DashboardLayout
-      isSwipeTheme={isDatingMode}
-      sidebarProps={{
-        viewMode,
-        onViewModeChange: setViewMode,
-        isHOD,
-        canApproveGlobal,
-        isSwipeTheme: isDatingMode,
-        portalTitle,
-      }}
-      navbarProps={{
-        user,
-        isHOD,
-        isSwipeTheme: isDatingMode,
-        pageLabel,
-        isRefreshing,
-        onRefresh: () => loadData(true),
-        onLogout,
-      }}
+      sidebarProps={{ viewMode, onViewModeChange: () => {}, isHOD, canApproveGlobal: true, isSwipeTheme: false, portalTitle: isHOD ? 'HOD Portal' : 'Faculty Portal' }}
+      navbarProps={{ user, isHOD, isSwipeTheme: false, pageLabel: 'Pending requests', isRefreshing, onRefresh: () => loadData(true), onLogout }}
     >
-      <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
-        {isLoading && viewMode !== 'SWIPE' ? (
-             <div className="flex items-center justify-center h-64">
-                 <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-             </div>
+      <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8 space-y-6">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+          </div>
         ) : (
-        <>
-        {viewMode === 'TRADITIONAL' && (
-          <div className="space-y-6 animate-fade-in min-h-[500px]">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {certTab === 'CERTIFICATES' ? (
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 md:col-span-3">
-                  <div className="w-12 h-12 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center">
-                    <Clock className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-500 font-medium">Pending Certificates</p>
-                    <p className="text-2xl font-bold text-gray-900">{pendingCertificates.length}</p>
-                  </div>
-                </div>
+          <>
+            <section className="space-y-4">
+              <h2 className="text-2xl font-bold text-gray-800">Pending Applications</h2>
+              {pendingApps.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-100 p-6 text-gray-500">No pending applications.</div>
               ) : (
-                <>
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center">
-                      <Clock className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 font-medium">Pending Review</p>
-                      <p className="text-2xl font-bold text-gray-900">{stats.pending}</p>
-                    </div>
-                  </div>
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-green-50 text-green-600 flex items-center justify-center">
-                      <Check className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 font-medium">Approved</p>
-                      <p className="text-2xl font-bold text-gray-900">{stats.approved}</p>
+                pendingApps.map(app => (
+                  <div key={app.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div className="font-bold text-gray-900">{app.studentName || 'Student'} ({app.studentUSN || '—'})</div>
+                        <div className="text-sm text-gray-600">{app.eventName}</div>
+                        <div className="text-xs text-gray-500">{format(safeDate(app.startDate), 'MMM d')} - {format(safeDate(app.endDate), 'MMM d, yyyy')}</div>
+                        <div className="text-sm text-gray-700 mt-2">{app.sop || app.reason || 'No SOP provided.'}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button onClick={() => handleDecision(app.id, 'approved')}><Check className="w-4 h-4 mr-1" /> Approve</Button>
+                        <Button variant="danger" onClick={() => handleDecision(app.id, 'rejected')}><X className="w-4 h-4 mr-1" /> Reject</Button>
+                      </div>
                     </div>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
-                      <X className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 font-medium">Rejected</p>
-                      <p className="text-2xl font-bold text-gray-900">{stats.rejected}</p>
-                    </div>
-                  </div>
-                </>
+                ))
               )}
-            </div>
+            </section>
 
-            <div className="flex items-center justify-between mb-2 pt-2 gap-4">
-              <h2 className="text-2xl font-bold text-gray-800">
-                {certTab === 'CERTIFICATES' ? 'Pending Certificates' : 'Pending Requests'}
-              </h2>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCertTab('REQUESTS')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
-                    certTab === 'REQUESTS'
-                      ? 'bg-orange-100 text-orange-800 shadow-sm'
-                      : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 border border-transparent'
-                  }`}
-                >
-                  Requests
-                  <span className="bg-orange-200/50 text-orange-800 px-2 py-0.5 rounded-full font-bold">
-                    {pendingApps.length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setCertTab('CERTIFICATES')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${
-                    certTab === 'CERTIFICATES'
-                      ? 'bg-orange-100 text-orange-800 shadow-sm'
-                      : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900 border border-transparent'
-                  } ${!certificatesEnabled ? 'opacity-60' : ''}`}
-                >
-                  Certificates
-                  <span className="bg-orange-200/50 text-orange-800 px-2 py-0.5 rounded-full font-bold">
-                    {pendingCertificates.length}
-                  </span>
-                </button>
-
-                {!canApproveGlobal && certTab === 'REQUESTS' && (
-                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2.5 py-1 rounded-full border border-gray-200">
-                    View Only
-                  </span>
-                )}
-              </div>
-            </div>
-            
-            {certTab === 'REQUESTS' && (pendingApps.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 shadow-sm">
-                    <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                        <Check className="w-8 h-8 text-green-500" />
-                    </div>
-                    <h3 className="text-lg font-medium text-gray-900">All caught up!</h3>
-                    <p className="text-gray-500">No pending applications to review.</p>
-                </div>
-            ) : (
-                <div className="grid gap-4">
-                {pendingApps.map(app => {
-                    const isAssignedToMe = app.assignedTeacherId === user.id;
-                    const canAction = canApproveGlobal || isAssignedToMe;
-                    return (
-                    <div key={app.id} className={`bg-white p-5 sm:p-6 rounded-xl shadow-sm border hover:shadow-md transition-shadow flex flex-col sm:flex-row justify-between gap-6 group relative ${app.isPriority ? 'border-orange-300 bg-orange-50/30' : 'border-gray-100'} ${isAssignedToMe ? 'ring-2 ring-orange-400 ring-offset-2' : ''}`}>
-                        <button 
-                            onClick={() => handleTogglePriority(app.id, !!app.isPriority)}
-                            className="absolute top-4 right-4 text-gray-300 hover:text-orange-500 transition-colors z-10"
-                            title={app.isPriority ? "Remove Priority" : "Mark as Priority"}
-                        >
-                            <Star className={`w-5 h-5 ${app.isPriority ? 'fill-orange-500 text-orange-500' : ''}`} />
-                        </button>
-                        {app.imageUrl ? (
-                            <div className="hidden sm:block w-32 h-32 rounded-lg bg-gray-100 shrink-0 overflow-hidden border border-gray-100">
-                                <img src={app.imageUrl} alt="Event" className="w-full h-full object-cover" />
-                            </div>
-                        ) : app.studentProfilePic ? (
-                            <div className="hidden sm:block w-32 h-32 rounded-lg bg-gray-100 shrink-0 overflow-hidden border border-gray-100">
-                                <img src={app.studentProfilePic} alt="Student" className="w-full h-full object-cover" />
-                            </div>
-                        ) : null}
-                        <div className="flex-1 space-y-3">
-                            <div className="flex flex-col gap-1">
-                                {isAssignedToMe && (
-                                     <div className="inline-flex items-center gap-1 text-xs font-bold text-orange-600 bg-orange-50 px-2 py-1 rounded-md border border-orange-100 w-fit">
-                                        <UserCog className="w-3 h-3" />
-                                        Assigned to You
-                                    </div>
-                                )}
-                                <div className="flex items-start justify-between sm:justify-start sm:items-center gap-3 pr-8">
-                                    <div className="flex items-center gap-3">
-                                        {app.studentProfilePic && (
-                                            <img src={app.studentProfilePic} alt="Profile" className="w-10 h-10 rounded-full object-cover border border-gray-200 sm:hidden" />
-                                        )}
-                                        <span className="font-bold text-lg text-gray-900">{app.studentName}</span>
-                                    </div>
-                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
-                                        {app.studentUSN}
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100/50">
-                                <Calendar className="w-5 h-5 text-orange-500 mt-0.5 flex-shrink-0" />
-                                <div>
-                                    <h4 className="font-semibold text-gray-900 text-sm">{app.eventName}</h4>
-                                    <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                                        <span>{format(safeDate(app.startDate), 'MMM d')}</span>
-                                        <ArrowRight className="w-3 h-3" />
-                                        <span>{format(safeDate(app.endDate), 'MMM d, yyyy')}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div>
-                                <h5 className="text-xs uppercase tracking-wide text-gray-500 font-bold mb-1">Reason</h5>
-                                <p className="text-gray-600 text-sm leading-relaxed">"{app.reason || 'No reason provided'}"</p>
-                            </div>
-                            {isHOD && (
-                                <div className="flex items-center gap-2 mt-2 bg-gray-50 p-2 rounded-lg w-fit">
-                                    <span className="text-xs font-bold text-gray-500 uppercase">Assign To:</span>
-                                    <div className="relative">
-                                        <select 
-                                            className="appearance-none bg-white border border-gray-300 text-gray-700 text-xs py-1 px-2 pr-6 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
-                                            value={app.assignedTeacherId || 'unassigned'}
-                                            onChange={(e) => handleAssignTeacher(app.id, e.target.value)}
-                                        >
-                                            <option value="unassigned">Unassigned</option>
-                                            {faculty.map(f => (
-                                                <option key={f.id} value={f.id}>{f.name}</option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown className="w-3 h-3 text-gray-500 absolute right-1.5 top-1.5 pointer-events-none" />
-                                    </div>
-                                </div>
-                            )}
-                            {!isHOD && !isAssignedToMe && app.assignedTeacherId && (
-                                <div className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
-                                    <UserCog className="w-3 h-3" />
-                                    Assigned to {faculty.find(f => f.id === app.assignedTeacherId)?.name || 'Faculty'}
-                                </div>
-                            )}
-                        </div>
-                        <div className="flex sm:flex-col justify-end gap-3 min-w-[120px] sm:border-l sm:border-gray-100 sm:pl-6 pt-4 sm:pt-0 border-t border-gray-100 sm:border-t-0">
-                            {canAction ? (
-                                <>
-                                    <button 
-                                        onClick={() => handleDecision(app.id, 'APPROVED')}
-                                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors shadow-sm"
-                                    >
-                                        <Check className="w-4 h-4" /> Approve
-                                    </button>
-                                    <button 
-                                        onClick={() => handleDecision(app.id, 'REJECTED')}
-                                        className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white border border-gray-200 hover:bg-red-50 hover:border-red-200 text-gray-700 hover:text-red-600 px-4 py-2 rounded-lg font-medium text-sm transition-colors"
-                                    >
-                                        <X className="w-4 h-4" /> Reject
-                                    </button>
-                                </>
-                            ) : (
-                                <div className="text-center sm:text-right">
-                                    <p className="text-xs text-gray-400 mb-2">Read Only</p>
-                                    <button 
-                                        onClick={() => handleTogglePriority(app.id, !!app.isPriority)}
-                                        className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border transition-colors ${app.isPriority ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
-                                    >
-                                        <Star className={`w-3 h-3 ${app.isPriority ? 'fill-current' : ''}`} />
-                                        {app.isPriority ? 'Priority' : 'Mark Priority'}
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )})}
-                </div>
-            ))}
-
-            {certTab === 'CERTIFICATES' && (
-              !certificatesEnabled ? (
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-center text-gray-600">
-                  Module disabled
-                </div>
+            <section className="space-y-4">
+              <h2 className="text-2xl font-bold text-gray-800">Pending Certificates</h2>
+              {!certificatesEnabled ? (
+                <div className="bg-white rounded-2xl border border-gray-100 p-6 text-gray-500">Certificates module is disabled.</div>
+              ) : pendingCertificates.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-100 p-6 text-gray-500">No pending certificates.</div>
               ) : (
-                <div className="space-y-4 min-h-[220px]">
-                  {pendingCertificates.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 shadow-sm">
-                      <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                        <Clock className="w-8 h-8 text-orange-500" />
-                      </div>
-                      <h3 className="text-lg font-medium text-gray-900">All caught up!</h3>
-                      <p className="text-gray-500">No pending certificates to review.</p>
+                pendingCertificates.map(cert => (
+                  <div key={cert.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between gap-4">
+                    <div>
+                      <div className="font-bold text-gray-900">{cert.studentName || 'Student'} ({cert.studentUSN || '—'})</div>
+                      <div className="text-sm text-gray-600">{cert.eventName || cert.eventType || 'Event'}</div>
+                      <div className="text-xs text-gray-500">Uploaded: {cert.uploadedAt ? format(safeDate(cert.uploadedAt), 'MMM d, yyyy') : '—'}</div>
+                      {cert.signedUrl && <a href={cert.signedUrl} target="_blank" rel="noreferrer" className="text-xs text-orange-700 inline-flex items-center gap-1 mt-1"><FileText className="w-3 h-3" /> View PDF</a>}
                     </div>
-                  ) : selectedCertificateId ? (
-                    (() => {
-                    const selected = pendingCertificates.find(c => c.id === selectedCertificateId) || null;
-                    if (!selected) {
-                      return (
-                        <div className="flex items-center justify-between bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-                          <div>
-                            <h3 className="text-lg font-semibold text-gray-900">Certificate no longer pending</h3>
-                            <p className="text-sm text-gray-500 mt-1">Returning to the pending list.</p>
-                          </div>
-                          <Button onClick={() => { setSelectedCertificateId(null); setCertificateRemarks(''); setExtendDeadlineDate(''); }} variant="outline">
-                            Back
-                          </Button>
-                        </div>
-                      );
-                    }
-
-                    const deadlineDateOnly =
-                      selected.deadline && selected.deadline.length >= 10 ? selected.deadline.slice(0, 10) : '';
-
-                    return (
-                      <div className="bg-white p-5 sm:p-6 rounded-2xl shadow-sm border border-gray-100">
-                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-                          <div>
-                            <h3 className="text-xl font-bold text-gray-900">Certificate Review</h3>
-                            <div className="mt-2 text-sm text-gray-700">
-                              <div className="font-semibold">{selected.studentName || 'Student'}</div>
-                              <div className="text-gray-500">{selected.studentUSN || ''}</div>
-                            </div>
-                            <div className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
-                              <Clock className="w-4 h-4 text-orange-600" />
-                              Deadline: {selected.deadline ? format(safeDate(selected.deadline), 'MMM d, yyyy') : '—'}
-                            </div>
-                            {selected.isLate && (
-                              <div className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-100 rounded-full px-3 py-1">
-                                <Clock className="w-3 h-3" /> Late upload
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex flex-col gap-2 sm:items-end">
-                            {selected.signedUrl && !selected.fileMissing ? (
-                              <a
-                                href={selected.signedUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-2 text-xs font-semibold text-orange-700 hover:text-orange-800"
-                              >
-                                <FileText className="w-4 h-4" /> View PDF
-                              </a>
-                            ) : (
-                              <div className="text-xs text-red-700 font-medium">
-                                File missing in storage. Ask student to re-upload after rejection.
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                            <h4 className="text-sm font-bold text-gray-900">Event</h4>
-                            <div className="mt-2 text-sm text-gray-700 font-semibold">{selected.eventName || selected.eventType || 'Event'}</div>
-                            {selected.startDate && selected.endDate && (
-                              <div className="mt-1 text-xs text-gray-500">
-                                {format(safeDate(selected.startDate), 'MMM d')} - {format(safeDate(selected.endDate), 'MMM d, yyyy')}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                            <h4 className="text-sm font-bold text-gray-900">Remarks</h4>
-                            <textarea
-                              value={certificateRemarks}
-                              onChange={(e) => setCertificateRemarks(e.target.value)}
-                              className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 resize-none"
-                              placeholder="Add remarks (optional)…"
-                              rows={4}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-end sm:justify-between">
-                          <div className="flex items-center gap-3">
-                            <div>
-                              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-                                Extend deadline
-                              </label>
-                              <input
-                                type="date"
-                                className="w-full sm:w-[180px] px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm shadow-sm focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-                                value={extendDeadlineDate || deadlineDateOnly}
-                                onChange={(e) => setExtendDeadlineDate(e.target.value)}
-                              />
-                            </div>
-                            <Button
-                              onClick={async () => {
-                                const dateStr = extendDeadlineDate || deadlineDateOnly;
-                                if (!dateStr) return;
-                                setCertActionBusy(true);
-                                try {
-                                  const newDeadlineIso = new Date(`${dateStr}T23:59:59.999Z`).toISOString();
-                                  await staffCertificateService.extendDeadline({
-                                    certificateId: selected.id,
-                                    staffId: user.id,
-                                    staffRole: user.role,
-                                    newDeadline: newDeadlineIso,
-                                  });
-                                  await loadData(true);
-                                  setSelectedCertificateId(null);
-                                  setCertificateRemarks('');
-                                  setExtendDeadlineDate('');
-                                } catch (err: any) {
-                                  alert(err?.message || 'Failed to extend deadline.');
-                                } finally {
-                                  setCertActionBusy(false);
-                                }
-                              }}
-                              disabled={certActionBusy}
-                              variant="outline"
-                            >
-                              Extend
-                            </Button>
-                          </div>
-
-                          <div className="flex gap-3 sm:justify-end">
-                            <Button
-                              onClick={async () => {
-                                setCertActionBusy(true);
-                                try {
-                                  await staffCertificateService.approveCertificate({
-                                    certificateId: selected.id,
-                                    staffId: user.id,
-                                    staffName: user.name,
-                                    staffRole: user.role,
-                                    remarks: certificateRemarks || undefined,
-                                  });
-                                  await loadData(true);
-                                  setSelectedCertificateId(null);
-                                  setCertificateRemarks('');
-                                  setExtendDeadlineDate('');
-                                } catch (err: any) {
-                                  alert(err?.message || 'Failed to approve certificate.');
-                                } finally {
-                                  setCertActionBusy(false);
-                                }
-                              }}
-                              disabled={certActionBusy}
-                              className="shadow-sm"
-                            >
-                              <Check className="w-4 h-4 mr-2" /> Approve
-                            </Button>
-
-                            <Button
-                              onClick={async () => {
-                                setCertActionBusy(true);
-                                try {
-                                  await staffCertificateService.rejectCertificate({
-                                    certificateId: selected.id,
-                                    staffId: user.id,
-                                    staffName: user.name,
-                                    staffRole: user.role,
-                                    remarks: certificateRemarks || undefined,
-                                  });
-                                  await loadData(true);
-                                  setSelectedCertificateId(null);
-                                  setCertificateRemarks('');
-                                  setExtendDeadlineDate('');
-                                } catch (err: any) {
-                                  alert(err?.message || 'Failed to reject certificate.');
-                                } finally {
-                                  setCertActionBusy(false);
-                                }
-                              }}
-                              disabled={certActionBusy}
-                              variant="danger"
-                            >
-                              <X className="w-4 h-4 mr-2" /> Reject
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()
-                  ) : (
-                    <div className="grid gap-4">
-                      {pendingCertificates.map(cert => (
-                        <div
-                          key={cert.id}
-                          className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
-                        >
-                          <div>
-                            <div className="text-sm text-gray-500">Student</div>
-                            <div className="font-bold text-gray-900">{cert.studentName || 'Student'}</div>
-                            <div className="text-xs text-gray-500">{cert.studentUSN || ''}</div>
-
-                            <div className="mt-3 text-sm text-gray-500">Event</div>
-                            <div className="font-semibold text-gray-900">{cert.eventName || cert.eventType || 'Event'}</div>
-                          </div>
-
-                          <div className="flex flex-col sm:items-end gap-2">
-                            <div className="inline-flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
-                              <Clock className="w-4 h-4 text-orange-600" />
-                              Deadline: {cert.deadline ? format(safeDate(cert.deadline), 'MMM d, yyyy') : '—'}
-                            </div>
-                            {cert.isLate && (
-                              <div className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-100 rounded-full px-3 py-1">
-                                <Clock className="w-3 h-3" /> Late upload
-                              </div>
-                            )}
-
-                            <Button
-                              onClick={() => {
-                                setSelectedCertificateId(cert.id);
-                                setCertificateRemarks('');
-                                setExtendDeadlineDate(cert.deadline ? cert.deadline.slice(0, 10) : '');
-                              }}
-                              variant="primary"
-                              size="md"
-                            >
-                              Review
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
+                    <div className="flex gap-2">
+                      <Button onClick={async () => { await staffCertificateService.approveCertificate({ certificateId: cert.id, staffId: user.id, staffName: user.name, staffRole: user.role }); await loadData(true); }}>Verify</Button>
+                      <Button variant="danger" onClick={async () => { await staffCertificateService.rejectCertificate({ certificateId: cert.id, staffId: user.id, staffName: user.name, staffRole: user.role }); await loadData(true); }}>Reject</Button>
                     </div>
-                  )}
-                </div>
-              )
-            )}
-          </div>
-        )}
-        {viewMode === 'SWIPE' && canApproveGlobal && (
-          <div className="flex flex-col items-center justify-center h-[calc(100vh-100px)] w-full overflow-hidden relative touch-none">
-            {pendingApps.length === 0 ? (
-                 <div className="text-center p-8 bg-white rounded-3xl shadow-xl border border-pink-100 max-w-sm mx-auto w-full mx-4 sm:mx-auto">
-                    <div className="w-20 h-20 bg-pink-50 text-pink-500 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce">
-                        <Heart className="w-10 h-10 fill-current" />
-                    </div>
-                    <h2 className="text-2xl font-bold text-gray-800 mb-2">No more matches!</h2>
-                    <p className="text-gray-500 mb-8">You've reviewed all pending applications.</p>
-                    <div className="space-y-3">
-                        <Button onClick={() => setViewMode('HISTORY')} variant="primary" fullWidth themeColor="pink" className="shadow-lg shadow-pink-200">
-                            View Decision History
-                        </Button>
-                        <Button onClick={() => setViewMode('TRADITIONAL')} variant="ghost" fullWidth themeColor="pink">
-                            Back to List
-                        </Button>
-                    </div>
-                 </div>
-            ) : (
-                <div className="relative w-full max-w-md px-4 h-[75vh] max-h-[700px] flex items-center justify-center">
-                    {pendingApps.length > 1 && (
-                         <div className={`
-                             absolute w-[calc(100%-48px)] h-[95%] bg-white rounded-3xl shadow-sm border border-pink-100 z-0
-                             transition-all duration-500 ease-out
-                             ${swipeDirection 
-                                ? 'scale-100 opacity-100 translate-y-0' 
-                                : 'scale-95 opacity-60 translate-y-4'
-                             }
-                         `}></div>
-                    )}
-                    <div 
-                        onPointerDown={handlePointerDown}
-                        onPointerMove={handlePointerMove}
-                        onPointerUp={handlePointerUp}
-                        onPointerCancel={handlePointerUp}
-                        style={{
-                            transform: swipeDirection 
-                                ? undefined 
-                                : `translate(${dragOffset.x}px, ${dragOffset.y}px) rotate(${dragOffset.x * 0.05}deg)`,
-                            cursor: isDragging ? 'grabbing' : 'grab',
-                            transition: isDragging ? 'none' : undefined 
-                        }}
-                        className={`
-                            absolute w-[calc(100%-32px)] h-full bg-white rounded-3xl shadow-2xl border border-pink-100 z-10 flex flex-col overflow-hidden 
-                            touch-none 
-                            ${!isDragging && !swipeDirection ? 'transition-all duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1.2)]' : ''}
-                            ${swipeDirection ? 'transition-all duration-300 ease-in' : ''}
-                            ${swipeDirection === 'left' ? '-translate-x-[150%] -rotate-12 opacity-0' : ''}
-                            ${swipeDirection === 'right' ? 'translate-x-[150%] rotate-12 opacity-0' : ''}
-                        `}
-                    >
-                         <div className="relative h-[65%] w-full bg-gray-200 shrink-0">
-                             {pendingApps[swipeIndex]?.studentProfilePic ? (
-                                <img src={pendingApps[swipeIndex].studentProfilePic} alt="Student" className="w-full h-full object-cover pointer-events-none select-none" draggable={false} />
-                             ) : pendingApps[swipeIndex]?.imageUrl ? (
-                                <img src={pendingApps[swipeIndex].imageUrl} alt="Event" className="w-full h-full object-cover pointer-events-none select-none" draggable={false} />
-                             ) : (
-                                <div className="w-full h-full bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center flex-col gap-2 text-white">
-                                    <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
-                                        <span className="text-4xl font-bold">{pendingApps[swipeIndex]?.studentName.charAt(0)}</span>
-                                    </div>
-                                    <p className="text-sm font-medium opacity-80">No photo available</p>
-                                </div>
-                             )}
-                             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent pointer-events-none"></div>
-                             <div className="absolute bottom-0 left-0 right-0 p-6 text-white pointer-events-none z-20">
-                                <h2 className="text-3xl font-bold tracking-tight drop-shadow-md truncate">{pendingApps[swipeIndex]?.studentName}</h2>
-                                <div className="flex items-center gap-2 text-white/90 font-medium mt-1">
-                                    <GraduationCap className="w-4 h-4" /> 
-                                    <span>{pendingApps[swipeIndex]?.studentUSN}</span>
-                                </div>
-                                <div className="flex flex-wrap gap-2 mt-3">
-                                     <span className="px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/20 text-xs font-semibold shadow-sm truncate max-w-full">
-                                        {pendingApps[swipeIndex]?.eventName}
-                                     </span>
-                                     <span className="px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/20 text-xs font-semibold shadow-sm flex items-center gap-1">
-                                        <Calendar className="w-3 h-3" />
-                                        {pendingApps[swipeIndex] && format(safeDate(pendingApps[swipeIndex].startDate), 'MMM d')}
-                                     </span>
-                                </div>
-                             </div>
-                         </div>
-                         <div className="flex-1 bg-white p-6 flex flex-col justify-between relative z-10">
-                            <div className="relative">
-                                <div className="absolute -left-3 top-0 bottom-0 w-1 bg-pink-200 rounded-full"></div>
-                                <p className="text-gray-600 text-sm leading-relaxed italic pl-3 line-clamp-3 overflow-y-hidden">
-                                    "{pendingApps[swipeIndex]?.reason || 'No reason provided'}"
-                                </p>
-                            </div>
-                            <div className="flex items-center justify-center gap-10 mt-2 pointer-events-auto pb-1">
-                                <button onClick={() => handleSwipe('left')} onPointerDown={(e) => e.stopPropagation()} className="group flex flex-col items-center gap-1 focus:outline-none">
-                                    <div className="w-14 h-14 rounded-full border-2 border-red-100 text-red-500 flex items-center justify-center transition-all duration-200 shadow-sm group-hover:scale-110 group-hover:bg-red-50 group-hover:border-red-200 bg-white">
-                                        <X className="w-6 h-6" />
-                                    </div>
-                                    <span className="text-[10px] font-bold uppercase tracking-widest text-red-300 group-hover:text-red-400">Reject</span>
-                                </button>
-                                <button onClick={() => handleSwipe('right')} onPointerDown={(e) => e.stopPropagation()} className="group flex flex-col items-center gap-1 focus:outline-none">
-                                    <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-pink-500 to-rose-600 text-white flex items-center justify-center transition-all duration-200 shadow-lg shadow-pink-200 group-hover:scale-110 group-hover:shadow-pink-300">
-                                        <Heart className="w-6 h-6 fill-white" />
-                                    </div>
-                                    <span className="text-[10px] font-bold uppercase tracking-widest text-pink-300 group-hover:text-pink-500">Approve</span>
-                                </button>
-                            </div>
-                         </div>
-                    </div>
-                </div>
-            )}
-          </div>
-        )}
-        {viewMode === 'HISTORY' && (
-          <div className="space-y-6 animate-fade-in pb-10">
-            <div className="flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-gray-800">Decision History</h2>
-                </div>
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <input 
-                        type="text" 
-                        placeholder="Search by student name, USN, or event..." 
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all shadow-sm text-sm"
-                        value={historySearchTerm}
-                        onChange={(e) => setHistorySearchTerm(e.target.value)}
-                    />
-                </div>
-                <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left min-w-[750px]">
-                            <thead className="bg-gray-50/80 border-b border-gray-100">
-                                <tr>
-                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Student</th>
-                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Event Details</th>
-                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Reason</th>
-                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Action By</th>
-                                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {historyApps.map(app => (
-                                    <tr key={app.id} className="hover:bg-gray-50/50 transition-colors group">
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
-                                                {app.studentProfilePic ? (
-                                                    <img src={app.studentProfilePic} alt="Profile" className="w-8 h-8 rounded-full object-cover" />
-                                                ) : (
-                                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-                                                        app.status?.toUpperCase() === 'APPROVED' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                                    }`}>
-                                                        {app.studentName.charAt(0)}
-                                                    </div>
-                                                )}
-                                                <div>
-                                                    <div className="font-medium text-gray-900">{app.studentName}</div>
-                                                    <div className="text-xs text-gray-500">{app.studentUSN}</div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 max-w-xs">
-                                            <div className="text-sm font-medium text-gray-900 truncate" title={app.eventName}>{app.eventName}</div>
-                                            <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                                                <Calendar className="w-3 h-3" />
-                                                <span>{format(safeDate(app.startDate), 'MMM d')}</span>
-                                                <ArrowRight className="w-3 h-3" />
-                                                <span>{format(safeDate(app.endDate), 'MMM d, yyyy')}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 max-w-xs">
-                                            <div className="text-sm text-gray-600 line-clamp-2" title={app.reason || 'No reason provided'}>
-                                                {app.reason || <span className="text-gray-400 italic">No reason provided</span>}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            {app.status?.toUpperCase() === 'APPROVED' ? (
-                                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">
-                                                    <Check className="w-3 h-3 mr-1" /> Approved
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
-                                                    <X className="w-3 h-3 mr-1" /> Rejected
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="text-sm text-gray-900 font-medium">
-                                                {app.actionByName || <span className="text-gray-400 italic">Unknown</span>}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <button 
-                                                onClick={() => handleRevoke(app.id)}
-                                                className="text-gray-400 hover:text-orange-600 text-sm font-medium inline-flex items-center gap-1 transition-all px-3 py-1.5 rounded-lg hover:bg-orange-50 hover:scale-105 active:scale-95 active:bg-orange-100"
-                                                title="Undo Decision"
-                                            >
-                                                <Undo2 className="w-4 h-4" /> 
-                                                <span className="hidden sm:inline">Revoke</span>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-          </div>
-        )}
-        {viewMode === 'STAFF' && isHOD && (
-             <div className="space-y-6 animate-fade-in">
-                 <h2 className="text-2xl font-bold text-gray-800">Faculty Management</h2>
-                 <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
-                    <table className="w-full text-left">
-                        <thead className="bg-gray-50/80 border-b border-gray-100">
-                            <tr>
-                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Faculty Name</th>
-                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Role</th>
-                                <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Approval Rights</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {faculty.map(f => (
-                                <tr key={f.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 font-medium text-gray-900">{f.name}</td>
-                                    <td className="px-6 py-4 text-sm text-gray-500">{f.role}</td>
-                                    <td className="px-6 py-4">
-                                        <label className="relative inline-flex items-center cursor-pointer">
-                                            <input 
-                                                type="checkbox" 
-                                                className="sr-only peer" 
-                                                checked={!!f.canApprove}
-                                                onChange={() => handlePermissionToggle(f.id, !!f.canApprove)}
-                                                disabled={String(f.role).toLowerCase() === 'hod'}
-                                            />
-                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-600"></div>
-                                            <span className="ml-3 text-sm font-medium text-gray-700">{f.canApprove ? 'Granted' : 'Revoked'}</span>
-                                        </label>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                 </div>
-             </div>
-        )}
-        </>
+                  </div>
+                ))
+              )}
+            </section>
+          </>
         )}
       </div>
     </DashboardLayout>

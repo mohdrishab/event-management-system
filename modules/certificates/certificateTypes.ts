@@ -2,17 +2,13 @@ export type CertificateStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
 
 export interface CertificateView {
   id: string;
-  studentId: string;
-  applicationId: string;
+  uid: string;
   eventId?: string | null;
-  filePath: string;
-  status: CertificateStatus;
-  isLate: boolean;
-  uploadedAt: string;
+  fileUrl: string;
+  verified: boolean;
+  status?: CertificateStatus;
+  uploadedAt?: string | null;
   verifiedBy?: string | null;
-  verifiedAt?: string | null;
-  deadline: string;
-  remarks?: string | null;
 
   // UI extras
   signedUrl?: string | null;
@@ -26,8 +22,8 @@ export interface CertificateView {
 }
 
 export interface UploadCertificateInput {
-  studentId: string;
-  applicationId: string;
+  uid: string;
+  eventId: string;
   file: File;
 }
 

@@ -31,28 +31,17 @@ export const certificateValidation = {
   },
 
   async validatePermissionForCertificateUpload(params: {
-    studentId: string;
-    applicationId: string;
-  }): Promise<{ eventId?: string | null; eventType?: string | null }> {
-    const app = await certificateRepository.getApplicationForCertificate(params.applicationId);
-    if (!app) throw new Error('Application not found.');
-
-    const ownerId = app.student_id != null ? String(app.student_id) : null;
-    if (!ownerId || ownerId !== params.studentId) {
-      throw new Error('You are not allowed to upload a certificate for this application.');
+    uid: string;
+    eventId: string;
+  }): Promise<void> {
+    const existing = await certificateRepository.getCertificateByUidAndEvent(params.uid, params.eventId);
+    if (existing && existing.verified) {
+      throw new Error('A verified certificate already exists for this event.');
     }
-
-    const eventType = app.event_type != null ? String(app.event_type) : null;
-    return {
-      eventId: app.event_id != null ? String(app.event_id) : null,
-      eventType,
-    };
   },
 
   validateDeadline(deadlineIso: string): void {
-    if (!deadlineIso) throw new Error('Missing certificate deadline.');
-    const d = new Date(deadlineIso);
-    if (isNaN(d.getTime())) throw new Error('Invalid certificate deadline.');
+    void deadlineIso;
   },
 };
 

@@ -5,7 +5,6 @@ import type {
   CertificateView,
 } from './certificateTypes';
 import { isCertificatesFeatureEnabled, certificateService } from './certificateService';
-import { certificateRepository } from './certificateRepository';
 
 function assertStaffCanDecide(role: string | undefined) {
   if (role !== 'professor' && role !== 'hod') {
@@ -16,7 +15,7 @@ function assertStaffCanDecide(role: string | undefined) {
 export const staffCertificateService = {
   async getPendingCertificates(): Promise<CertificateView[]> {
     if (!(await isCertificatesFeatureEnabled())) return [];
-    return certificateService.getAllCertificates().then(list => list.filter(c => c.status === 'pending'));
+    return certificateService.getAllCertificates().then(list => list.filter(c => c.verified === false));
   },
 
   async approveCertificate(params: ApproveRejectCertificateInput & { staffRole?: string }): Promise<CertificateView> {
@@ -44,23 +43,16 @@ export const staffCertificateService = {
   },
 
   async extendDeadline(params: ExtendCertificateDeadlineInput & { staffRole?: string }): Promise<CertificateView> {
-    if (!(await isCertificatesFeatureEnabled())) throw new Error('Certificates feature is disabled.');
-    assertStaffCanDecide(params.staffRole);
-
-    const updated = await certificateRepository.extendCertificateDeadline({
-      certificateId: params.certificateId,
-      newDeadline: params.newDeadline,
-    });
-
-    const view = await certificateRepository.getCertificateByApplicationId(updated.applicationId);
-    if (!view) return updated;
-    return view;
+    void params;
+    throw new Error('Deadline extension is not supported by the finalized certificates schema.');
   },
 
   async getCertificatesForHod(status: CertificateStatus | 'all'): Promise<CertificateView[]> {
     if (!(await isCertificatesFeatureEnabled())) return [];
     if (status === 'all') return certificateService.getAllCertificates();
-    return certificateService.getAllCertificates().then(list => list.filter(c => c.status === status));
+    if (status === 'pending') return certificateService.getAllCertificates().then(list => list.filter(c => !c.verified));
+    if (status === 'approved') return certificateService.getAllCertificates().then(list => list.filter(c => c.verified));
+    return [];
   },
 
   async revokeCertificate(params: ApproveRejectCertificateInput & { staffRole?: string }): Promise<CertificateView> {

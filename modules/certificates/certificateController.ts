@@ -16,12 +16,12 @@ export const certificateController = {
     return certificateService.reuploadCertificate(input);
   },
 
-  async getStudentCertificates(studentId: string) {
-    return certificateService.getStudentCertificates(studentId);
+  async getStudentCertificates(uid: string) {
+    return certificateService.getStudentCertificates(uid);
   },
 
-  async getCertificateStatus(applicationId: string) {
-    return certificateService.getCertificateStatus(applicationId);
+  async getCertificateStatus(uid: string, eventId: string) {
+    return certificateService.getCertificateStatus(uid, eventId);
   },
 
   async getPendingCertificates() {

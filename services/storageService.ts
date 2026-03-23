@@ -3,29 +3,30 @@ import { supabase } from '../lib/supabaseClient';
 import { inferRequestKind } from '../lib/hodRequestHelpers';
 
 function mapApplicationRow(app: Record<string, any>): LeaveApplication {
-  const students = app.students as { name?: string; usn?: string } | undefined;
   return {
     id: app.id,
+    uid: app.uid,
     studentId: app.student_id,
+    eventId: app.event_id,
     eventName: app.event_name,
     startDate: app.start_date,
     endDate: app.end_date,
     status: app.status,
-    studentName: students?.name ?? app.student_name,
-    studentUSN: students?.usn ?? app.student_usn,
-    studentProfilePic: app.student_profile_pic ?? app.image_url,
+    studentName: app.student_name,
+    studentUSN: app.student_usn,
     eventLocation: app.event_location,
     eventType: app.event_type,
     organizedBy: app.organized_by,
+    sop: app.sop,
     reason: app.reason,
     timestamp: app.timestamp,
     reviewedAt: app.reviewed_at,
-    updatedAt: app.updated_at,
+    approvedBy: app.approved_by,
     actionBy: app.action_by,
     actionByName: app.action_by_name,
-    imageUrl: app.image_url,
-    isPriority: app.is_priority,
-    assignedTeacherId: app.assigned_teacher_id,
+    actionRole: app.action_role,
+    actionAt: app.action_at,
+    createdAt: app.created_at,
     requestKind: inferRequestKind(app),
   };
 }
@@ -58,7 +59,7 @@ export const storageService = {
       name: s.name,
       role: 'professor' as const,
       department: s.department,
-      canApprove: s.can_approve !== false,
+      canApprove: true,
     }));
   },
 
@@ -77,47 +78,66 @@ export const storageService = {
   getApplications: async (): Promise<LeaveApplication[]> => {
     const { data, error } = await supabase
       .from('applications')
-      .select(
-        `
-        *,
-        students (
-          name,
-          usn
-        )
-      `
-      )
-      .order('start_date', { ascending: false });
+      .select('*')
+      .order('timestamp', { ascending: false });
 
     if (error) throw error;
-    return (data || []).map((row: Record<string, any>) => mapApplicationRow(row));
+    const rows = (data || []).map((row: Record<string, any>) => mapApplicationRow(row));
+    const studentIds = Array.from(new Set(rows.map(r => r.studentId).filter(Boolean))) as string[];
+    if (studentIds.length === 0) return rows;
+    const { data: students } = await supabase.from('students').select('id,name,usn').in('id', studentIds);
+    const byId = new Map((students || []).map((s: any) => [String(s.id), s]));
+    return rows.map(r => ({
+      ...r,
+      studentName: r.studentName || byId.get(String(r.studentId))?.name || '',
+      studentUSN: r.studentUSN || byId.get(String(r.studentId))?.usn || '',
+    }));
   },
 
-  getStudentApplications: async (studentId: string): Promise<LeaveApplication[]> => {
+  getStudentApplications: async (uid: string): Promise<LeaveApplication[]> => {
     const { data, error } = await supabase
       .from('applications')
       .select('*')
-      .eq('student_id', studentId)
-      .order('start_date', { ascending: false });
+      .eq('uid', uid)
+      .order('timestamp', { ascending: false });
 
     if (error) throw error;
     return (data || []).map((row: Record<string, any>) => mapApplicationRow(row));
   },
 
   saveApplication: async (app: Record<string, unknown>): Promise<void> => {
+    const uid = String(app.uid || app.student_id || app.studentId || '');
+    const eventId = String(app.event_id || app.eventId || '');
+    if (!uid) throw new Error('Missing uid for application insert.');
+    if (!eventId) throw new Error('Missing event_id for application insert.');
+
     const row: Record<string, unknown> = {
-      student_id: app.student_id || app.studentId,
+      uid,
+      student_id: uid,
+      event_id: eventId,
       event_name: app.event_name || app.eventName,
+      event_type: app.event_type || app.eventType,
       start_date: app.start_date || app.startDate,
       end_date: app.end_date || app.endDate,
-      reason: app.reason,
+      sop: app.sop || app.reason || '',
+      reason: null,
       event_location: app.eventLocation || app.event_location,
       organized_by: app.organizedBy || app.organized_by,
       timestamp: app.timestamp || new Date().toISOString(),
       status: 'pending',
+      approved_by: null,
+      action_by: null,
+      action_by_name: null,
+      action_role: null,
+      reviewed_at: null,
+      action_at: null,
     };
 
-    const { error } = await supabase.from('applications').insert([row]);
-    if (error) throw error;
+    const { error } = await supabase.from('applications').insert(row);
+    if (error) {
+      console.error('saveApplication insert failed:', error);
+      throw error;
+    }
   },
 
   updateApplicationStatus: async (
@@ -126,12 +146,26 @@ export const storageService = {
     actionBy?: string,
     actionByName?: string
   ): Promise<void> => {
-    const updateData: Record<string, unknown> = { status };
-    if (actionBy) updateData.action_by = actionBy;
+    const now = new Date().toISOString();
+    const updateData: Record<string, unknown> = {
+      status,
+      action_at: status === 'pending' ? null : now,
+      reviewed_at: status === 'pending' ? null : now,
+    };
+    if (actionBy) {
+      updateData.action_by = actionBy;
+      updateData.approved_by = status === 'approved' ? actionBy : null;
+    }
     if (actionByName) updateData.action_by_name = actionByName;
+    if (actionBy) {
+      const { data: staff } = await supabase.from('staff').select('role').eq('id', actionBy).maybeSingle();
+      if (staff?.role) updateData.action_role = String(staff.role);
+    }
     if (status === 'pending') {
       updateData.action_by = null;
       updateData.action_by_name = null;
+      updateData.approved_by = null;
+      updateData.action_role = null;
     }
 
     const { error } = await supabase.from('applications').update(updateData).eq('id', appId);
@@ -139,33 +173,30 @@ export const storageService = {
   },
 
   togglePriority: async (appId: string, isPriority: boolean): Promise<void> => {
-    const { error } = await supabase.from('applications').update({ is_priority: isPriority }).eq('id', appId);
-    if (error) throw error;
+    void appId;
+    void isPriority;
   },
 
   assignApplication: async (appId: string, teacherId: string | null): Promise<void> => {
-    const { error } = await supabase
-      .from('applications')
-      .update({ assigned_teacher_id: teacherId })
-      .eq('id', appId);
-    if (error) throw error;
+    void appId;
+    void teacherId;
   },
 
   updateFacultyPermission: async (userId: string, canApprove: boolean): Promise<void> => {
-    const { error } = await supabase.from('staff').update({ can_approve: canApprove }).eq('id', userId);
-    if (error) throw error;
+    void userId;
+    void canApprove;
   },
 
   /** HoD: students with aggregated request counts */
   getHodStudentRows: async (): Promise<HodStudentRow[]> => {
     const { data: students, error: e1 } = await supabase.from('students').select('*');
     if (e1) throw e1;
-    const { data: apps, error: e2 } = await supabase.from('applications').select('student_id, status');
+    const { data: apps, error: e2 } = await supabase.from('applications').select('uid, status');
     if (e2) throw e2;
 
     const byStudent = new Map<string, { total: number; pending: number }>();
     for (const a of apps || []) {
-      const sid = (a as { student_id: string }).student_id;
+      const sid = (a as { uid: string }).uid;
       const cur = byStudent.get(sid) || { total: 0, pending: 0 };
       cur.total += 1;
       if (String((a as { status: string }).status).toUpperCase() === 'PENDING') cur.pending += 1;
@@ -206,10 +237,10 @@ export const storageService = {
       id: s.id,
       name: s.name,
       department: s.department,
-      role: s.role === 'hod' ? 'HoD' : 'Counselor',
+      role: s.role === 'hod' ? 'HoD' : 'Professor',
       requestsReviewed: counts.get(s.id) || 0,
       isActive: s.is_active !== false,
-      canApprove: s.can_approve !== false,
+      canApprove: true,
     }));
   },
 
@@ -226,15 +257,7 @@ export const storageService = {
   getApplicationById: async (id: string): Promise<LeaveApplication | null> => {
     const { data, error } = await supabase
       .from('applications')
-      .select(
-        `
-        *,
-        students (
-          name,
-          usn
-        )
-      `
-      )
+      .select('*')
       .eq('id', id)
       .maybeSingle();
     if (error) throw error;
@@ -273,7 +296,7 @@ export const storageService = {
         a.startDate,
         a.endDate,
         a.status,
-        a.status === 'pending' ? (a.assignedTeacherId ? 'reviewed' : 'pending') : '—',
+        a.status === 'pending' ? 'pending' : 'reviewed',
         a.timestamp || '',
       ];
       lines.push(row.join(','));

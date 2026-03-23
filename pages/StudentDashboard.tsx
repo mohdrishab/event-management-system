@@ -3,7 +3,7 @@ import { User, LeaveApplication, ApplicationStatus } from '../types';
 import { storageService } from '../services/storageService';
 import { generateLeaveReason, improveWriting, makeProfessional, shortenText } from '../services/geminiService';
 import { Button } from '../components/Button';
-import { Calendar, Clock, CheckCircle, XCircle, Sparkles, LogOut, ArrowRight, BarChart3, Hourglass, CalendarDays, Camera, X, ZoomIn, ZoomOut, Move, Loader2, Bell, FileText, Compass, User as UserIcon, Award, MapPin, Building, ChevronDown, Wand2, Edit3, Trash2 } from 'lucide-react';
+import { Calendar, Clock, CheckCircle, XCircle, Sparkles, LogOut, ArrowRight, BarChart3, Hourglass, CalendarDays, Camera, X, ZoomIn, ZoomOut, Move, Loader2, Bell, FileText, Compass, User as UserIcon, Award, MapPin, Building, ChevronDown, Wand2, Edit3, Trash2, Briefcase } from 'lucide-react';
 import { format, differenceInDays, isFuture } from 'date-fns';
 import { certificateService, isCertificatesFeatureEnabled } from '../modules/certificates/certificateService';
 import { eligibilityService } from '../modules/certificates/eligibilityService';
@@ -352,14 +352,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
 
     try {
         await storageService.saveApplication({
+          uid: user.id,
           student_id: user.id,
+          event_id: `${eventType}-${eventName}`.toLowerCase().replace(/\s+/g, '-'),
           event_name: eventName,
+          event_type: eventType,
           start_date: startDate,
           end_date: endDate,
           eventLocation,
-          eventType,
           organizedBy,
-          reason,
+          sop: reason,
         });
         setEventName('');
         setStartDate('');
@@ -381,7 +383,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
   const handleWithdraw = async (appId: string) => {
     if (confirm("Are you sure you want to withdraw this application?")) {
       try {
-        await storageService.updateApplicationStatus(appId, 'REJECTED'); // Or a new 'WITHDRAWN' status if added to types
+        await storageService.updateApplicationStatus(appId, 'rejected');
         await loadApplications();
       } catch (error) {
         console.error("Failed to withdraw", error);
@@ -390,22 +392,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
     }
   };
 
-  const handleCertificateUpload = async (applicationId: string, file: File) => {
-    if (!certificatesEnabled) return;
-    setUploadingCertificateForAppId(applicationId);
+  const handleCertificateUpload = async (eventId: string, file: File) => {
+    if (!certificatesEnabled || !eventId) return;
+    setUploadingCertificateForAppId(eventId);
     try {
-      const existing = certificates.find(c => c.applicationId === applicationId) || null;
+      const existing = certificates.find(c => String(c.eventId || '') === eventId) || null;
 
-      if (existing?.status === 'approved' && !existing.fileMissing) {
+      if (existing?.verified && !existing.fileMissing) {
         throw new Error('This application already has an approved certificate.');
       }
 
-        if (existing?.status === 'rejected' || existing?.status === 'revoked') {
-        await certificateService.reuploadCertificate({ studentId: user.id, applicationId, file });
-      } else {
-        // For missing / pending certificates, upload will upsert/overwrite to `pending`.
-        await certificateService.uploadCertificate({ studentId: user.id, applicationId, file });
-      }
+      await certificateService.reuploadCertificate({ uid: user.id, eventId, file });
 
       await loadCertificates();
         await loadUploadableApplications();
@@ -482,11 +479,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
   };
 
   const filteredApplications = useMemo(() => applications.filter(app => 
-    filterStatus === 'ALL' || app.status?.toUpperCase() === filterStatus.toUpperCase()
+    filterStatus === 'ALL' || String(app.status || '').toLowerCase() === filterStatus
   ), [applications, filterStatus]);
 
-  const certificateByAppId = useMemo(() => {
-    return new Map<string, CertificateView>(certificates.map(c => [c.applicationId, c]));
+  const certificateByEventId = useMemo(() => {
+    return new Map<string, CertificateView>(certificates.map(c => [String(c.eventId || ''), c]));
   }, [certificates]);
 
   const stats = useMemo(() => ({
@@ -687,9 +684,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                       <div className="flex items-center bg-white p-1 rounded-lg border border-gray-200 shadow-sm overflow-x-auto">
                         <button onClick={() => setFilterStatus('ALL')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'ALL' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>All <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'ALL' ? 'bg-gray-600' : 'bg-gray-100'}`}>{stats.total}</span></button>
                         <div className="w-px h-4 bg-gray-200 mx-1"></div>
-                        <button onClick={() => setFilterStatus('PENDING')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'PENDING' ? 'bg-yellow-100 text-yellow-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Pending <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'PENDING' ? 'bg-yellow-200/50' : 'bg-gray-100'}`}>{stats.pending}</span></button>
-                        <button onClick={() => setFilterStatus('APPROVED')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'APPROVED' ? 'bg-green-100 text-green-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Approved <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'APPROVED' ? 'bg-green-200/50' : 'bg-gray-100'}`}>{stats.approved}</span></button>
-                        <button onClick={() => setFilterStatus('REJECTED')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'REJECTED' ? 'bg-red-100 text-red-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Rejected <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'REJECTED' ? 'bg-red-200/50' : 'bg-gray-100'}`}>{stats.rejected}</span></button>
+                        <button onClick={() => setFilterStatus('pending')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Pending <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'pending' ? 'bg-yellow-200/50' : 'bg-gray-100'}`}>{stats.pending}</span></button>
+                        <button onClick={() => setFilterStatus('approved')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'approved' ? 'bg-green-100 text-green-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Approved <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'approved' ? 'bg-green-200/50' : 'bg-gray-100'}`}>{stats.approved}</span></button>
+                        <button onClick={() => setFilterStatus('rejected')} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap flex items-center gap-2 ${filterStatus === 'rejected' ? 'bg-red-100 text-red-800' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'}`}>Rejected <span className={`px-1.5 py-0.5 rounded-full text-[10px] leading-none ${filterStatus === 'rejected' ? 'bg-red-200/50' : 'bg-gray-100'}`}>{stats.rejected}</span></button>
                       </div>
                   </div>
 
@@ -742,15 +739,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                 {app.reason}
                               </p>
 
-                              {certificatesEnabled && (app.status?.toUpperCase() === 'APPROVED' || certificateByAppId.get(app.id)) && (
+                              {certificatesEnabled && (app.status?.toUpperCase() === 'APPROVED' || certificateByEventId.get(String(app.eventId || ''))) && (
                                 <div className="mt-4 p-4 rounded-xl border border-orange-100 bg-orange-50/30">
                                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                     <div className="flex items-center gap-2">
                                       <Award className="w-4 h-4 text-orange-600" />
                                       <h4 className="font-semibold text-gray-900">Certificate Status</h4>
                                     </div>
-                                    {certificateByAppId.get(app.id) ? (
-                                      getCertificateStatusBadge(certificateByAppId.get(app.id)?.status)
+                                    {certificateByEventId.get(String(app.eventId || '')) ? (
+                                      getCertificateStatusBadge(certificateByEventId.get(String(app.eventId || ''))?.status)
                                     ) : (
                                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-200">
                                         Not uploaded
@@ -764,7 +761,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                       <span>{format(safeDate(app.endDate), 'MMM d, yyyy')}</span>
                                     </div>
                                     <div className="text-xs text-gray-600">
-                                      {certificateByAppId.get(app.id)?.isLate ? (
+                                      {false ? (
                                         <span className="inline-flex items-center gap-1 font-semibold text-red-700 bg-red-50 border border-red-100 px-2 py-1 rounded-full">
                                           <Clock className="w-3 h-3" /> Late upload
                                         </span>
@@ -774,10 +771,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                     </div>
                                   </div>
 
-                                  {certificateByAppId.get(app.id)?.signedUrl && !certificateByAppId.get(app.id)?.fileMissing && (
+                                  {certificateByEventId.get(String(app.eventId || ''))?.signedUrl && !certificateByEventId.get(String(app.eventId || ''))?.fileMissing && (
                                     <div className="mt-3">
                                       <a
-                                        href={certificateByAppId.get(app.id)?.signedUrl || '#'}
+                                        href={certificateByEventId.get(String(app.eventId || ''))?.signedUrl || '#'}
                                         target="_blank"
                                         rel="noreferrer"
                                         className="inline-flex items-center gap-2 text-xs font-semibold text-orange-700 hover:text-orange-800"
@@ -787,22 +784,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                     </div>
                                   )}
 
-                                  {certificateByAppId.get(app.id)?.fileMissing && (
+                                  {certificateByEventId.get(String(app.eventId || ''))?.fileMissing && (
                                     <div className="mt-3 text-xs text-red-700 font-medium">
                                       File not found in storage. Please re-upload.
                                     </div>
                                   )}
 
-                                  {certificateByAppId.get(app.id)?.remarks && (
+                                  {false && (
                                     <div className="mt-3 text-xs text-gray-700">
                                       <span className="font-semibold">Staff remarks: </span>
-                                      {certificateByAppId.get(app.id)?.remarks}
+                                      {''}
                                     </div>
                                   )}
 
                                   <div className="mt-4">
                                     {(() => {
-                                      const cert = certificateByAppId.get(app.id);
+                                      const cert = certificateByEventId.get(String(app.eventId || ''));
                                       const busy = uploadingCertificateForAppId === app.id;
 
                                       if (!cert) {
@@ -816,14 +813,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                               disabled={busy || isSubmitting || isGenerating}
                                               onChange={(e) => {
                                                 const f = e.target.files?.[0];
-                                                if (f) handleCertificateUpload(app.id, f);
+                                                if (f) handleCertificateUpload(String(app.eventId || ''), f);
                                               }}
                                             />
                                           </>
                                         );
                                       }
 
-                                      if (cert.status === 'pending' && !cert.fileMissing) {
+                                      if (cert.verified === false && !cert.fileMissing) {
                                         return (
                                           <div className="text-xs text-gray-600">
                                             Certificate uploaded and pending review. Re-upload is available only after rejection or revocation.
@@ -831,7 +828,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                         );
                                       }
 
-                                      if (cert.status === 'rejected' || cert.status === 'revoked' || cert.fileMissing) {
+                                      if (cert.verified === false || cert.fileMissing) {
                                         return (
                                           <>
                                             <label className="block text-xs font-semibold text-gray-700 mb-2">Re-upload (overwrites previous file)</label>
@@ -842,7 +839,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                               disabled={busy || isSubmitting || isGenerating}
                                               onChange={(e) => {
                                                 const f = e.target.files?.[0];
-                                                if (f) handleCertificateUpload(app.id, f);
+                                                if (f) handleCertificateUpload(String(app.eventId || ''), f);
                                               }}
                                             />
                                           </>
@@ -903,7 +900,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                   {uploadableLoading ? (
                     <div className="text-sm text-gray-500">Loading uploadable applications…</div>
                   ) : uploadableApplications.length === 0 ? (
-                    <div className="text-sm text-gray-500">No approved applications pending certificate upload.</div>
+                    <div className="text-sm text-gray-500">No applications pending certificate upload.</div>
                   ) : (
                     <div className="space-y-4">
                       {uploadableApplications.map((app: any) => (
@@ -934,7 +931,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                               disabled={uploadingCertificateForAppId === String(app.id) || isSubmitting || isGenerating}
                               onChange={(e) => {
                                 const f = e.target.files?.[0];
-                                if (f) void handleCertificateUpload(String(app.id), f);
+                                if (f) void handleCertificateUpload(String(app.event_id || app.eventId || ''), f);
                               }}
                             />
                           </div>
@@ -994,12 +991,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                             </div>
                           </div>
 
-                          {cert.remarks && (
-                            <div className="text-xs text-gray-700">
-                              <span className="font-semibold">Staff remarks: </span>
-                              {cert.remarks}
-                            </div>
-                          )}
+                          {false && null}
 
                           <div className="mt-1">
                             {cert.status === 'pending' && !cert.fileMissing ? (
@@ -1019,10 +1011,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ user: initia
                                   type="file"
                                   accept="application/pdf"
                                   className="block w-full text-xs text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100"
-                                  disabled={uploadingCertificateForAppId === cert.applicationId || isSubmitting || isGenerating}
+                                  disabled={uploadingCertificateForAppId === String(cert.eventId || '') || isSubmitting || isGenerating}
                                   onChange={(e) => {
                                     const f = e.target.files?.[0];
-                                    if (f) void handleCertificateUpload(cert.applicationId, f);
+                                    if (f) void handleCertificateUpload(String(cert.eventId || ''), f);
                                   }}
                                 />
                               </>

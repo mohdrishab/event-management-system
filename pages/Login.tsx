@@ -31,7 +31,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           .from('students')
           .select('*')
           .eq('usn', identifier.trim())
-          .eq('password', password)
+          .eq('password', password.trim())
           .single();
 
         if (dbError || !data) {
@@ -54,12 +54,18 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           .maybeSingle();
 
         if (dbError || !data) {
-          setError(`Invalid professor credentials. Please try again.`);
+          setError(`Invalid ${activeTab === 'hod' ? 'HoD' : 'staff'} credentials. Please try again.`);
         } else {
+          const role = String(data.role || '').trim().toLowerCase();
+          if (role !== 'hod' && role !== 'professor') {
+            setError('Your account role is not recognized. Please contact the administrator.');
+            return;
+          }
+
           onLogin({
             id: data.id,
             name: data.name,
-            role: data.role
+            role,
           });
         }
       }

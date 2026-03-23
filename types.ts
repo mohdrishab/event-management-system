@@ -22,27 +22,29 @@ export type RequestKind = 'leave' | 'late_entry';
 
 export interface LeaveApplication {
   id: string;
-  studentId: string;
+  uid: string;
+  studentId?: string;
+  eventId?: string | null;
   eventName: string;
+  eventType?: string;
   startDate: string;
   endDate: string;
   status: ApplicationStatus;
+  sop?: string;
+  reason?: string;
+  approvedBy?: string | null;
+  actionRole?: string | null;
+  actionAt?: string | null;
+  createdAt?: string | null;
   // Additional fields for UI
   studentName?: string;
   studentUSN?: string;
-  studentProfilePic?: string;
   eventLocation?: string;
-  eventType?: string;
   organizedBy?: string;
-  reason?: string;
   timestamp?: string; // ISO string
   reviewedAt?: string;
-  updatedAt?: string;
   actionBy?: string; // ID of the user who approved/rejected
   actionByName?: string; // Name of the user who approved/rejected
-  imageUrl?: string; // URL or Base64 string of the event image
-  isPriority?: boolean; // Marked by teachers for HOD attention
-  assignedTeacherId?: string | null; // Teacher assigned to review this application
   /** Derived or from `request_type` column */
   requestKind?: RequestKind;
 }
